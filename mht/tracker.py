@@ -1,13 +1,15 @@
 import numpy as np
-from numpy import (array, ceil, exp, eye, ones, log, vstack, hstack, int)
+from numpy import (array, argsort, ceil, exp, eye, ones, log, vstack, hstack, int)
 from numpy.linalg import (inv)
 from .gaussian import (predicted_likelihood, innovation)
+from .gaussian import (Density)
 
 from murty import Murty
 
 EPS = np.finfo('d').eps
-LOG_0 = log(EPS) #np.finfo('d').min
-
+LARGE = np.finfo('d').max
+LOG_0 = -LARGE #log(EPS) #np.finfo('d').min
+MISS = None
 
 def _normalize_log_sum(items):
     if len(items) == 1:
@@ -17,28 +19,78 @@ def _normalize_log_sum(items):
         max_log_w = items[i[0]]
         log_sum = max_log_w + log(1.0+sum(exp(items[i[1:]]-max_log_w)))
 
-    return (log_sum, items-log_sum)
+    return (items-log_sum, log_sum)
+
+class LocalHypothesis(object):
+
+    def __init__(self, state):
+        self._state = state#Density(x=state.x, P=state.P)
+        self._lid = self.__class__._counter
+        self.__class__._counter += 1
+
+    def id(self):
+        return self._lid
+
+    def density(self):
+        return self._state
+
+    def predict(self, motionmodel):
+        self._state.predict(motionmodel)
+
+    def __repr__(self):
+        return "<loc_hyp {0}: {1}>".format(self.id(), self._state)
+
+LocalHypothesis._counter = 0
 
 class Track(object):
 
-    def __init__(self, state):
-        self._lhyps = array([state])
+    def __init__(self, local_hypothesis):
+        self._lhyps = {local_hypothesis.id(): local_hypothesis}
         self._trid = self.__class__._counter
         self.__class__._counter += 1
+
+    def __repr__(self):
+        return "<track {0}: {1}>".format(self.id(), self._lhyps)
 
     def id(self):
         return self._trid
 
-    def detection_likelihood(self, Z, gating_size2, P_D, intensity_c, measmodel):
-        lhood = np.full((len(self._lhyps),len(Z)), LOG_0)
+    def estimate(self, lhyp_id):
+        return self._lhyps[lhyp_id].density()
 
-        for h, state in enumerate(self._lhyps):
+    def select(self, selected_lhyp_ids):
+        self._lhyps = {
+            lid: lhyp for lid, lhyp in self._lhyps.items()
+            if lid in selected_lhyp_ids
+        }
+
+    def predict(self, motionmodel):
+        for lhyp in self._lhyps.values():
+            lhyp.predict(motionmodel)
+
+    def update(self, Z, gating_size2, P_D, intensity_c, measmodel):        
+        new_lhyps = dict()
+        lhood = dict()
+
+        for h, lhyp in self._lhyps.items():
+            state = lhyp.density()
             S = innovation(state, measmodel)
-            (z_in_gate, in_gate_indices) = state.gating(Z, measmodel, gating_size2, inv(S))
+            inv_S = inv(S)
+            (z_in_gate, in_gate_indices) = state.gating(Z, measmodel, gating_size2, inv_S)
             lh = array([predicted_likelihood(state, z, S, measmodel) for z in z_in_gate])
-            lhood[h, in_gate_indices] = lh + log(P_D+EPS) - log(intensity_c+EPS)
+            lhood[h] = np.full(len(Z), LOG_0)
+            lhood[h][in_gate_indices] = lh + log(P_D+EPS) - log(intensity_c+EPS)
+            new_lhyps[h] = {
+                j: LocalHypothesis(Density(state.x, state.P).update(Z[j], measmodel, inv_S))
+                for j in in_gate_indices
+            }
+            new_lhyps[h][MISS] = LocalHypothesis(Density(state.x, state.P))
 
-        return lhood
+        for _, det_to_new_lhyp in new_lhyps.items():
+            for lhyp in det_to_new_lhyp.values():
+                self._lhyps[lhyp.id()] = lhyp
+
+        return lhood, new_lhyps
 
 Track._counter = 0
 
@@ -48,30 +100,32 @@ class CostMatrix(object):
         self._index_to_trid = list(global_hypothesis.keys())
 
         c_track_detection = vstack(tuple(
-            (detection_likelihood[trid][global_hypothesis[trid],:] 
+            (detection_likelihood[trid][global_hypothesis[trid]] 
             for trid in self._index_to_trid)
         ))
         
-        _, m = c_track_detection.shape
+        n, _ = c_track_detection.shape
 
-        c_miss = np.full((m,m), LOG_0)
+        c_miss = np.full((n,n), LOG_0)
         np.fill_diagonal(c_miss, miss_likelihood)
 
-        self._matrix = -1.0 * hstack((c_track_detection.T, c_miss))
+        self._matrix = -1.0 * hstack((c_track_detection, c_miss))
 
     def solutions(self, max_nof_solutions):
         murty_solver = Murty(self._matrix)
 
         for _ in range(int(max_nof_solutions)):
-            is_ok, sum_cost, det_to_track = murty_solver.draw()
+            is_ok, sum_cost, track_to_det = murty_solver.draw()
 
             if not is_ok:
                 return None
 
+            n, m_plus_n = self._matrix.shape
+
             assignments = {
-                self._index_to_trid[track_index]: detection
-                for detection, track_index in enumerate(det_to_track)
-                if track_index in range(len(self._index_to_trid))
+                self._index_to_trid[track_index]: 
+                detection if detection in range(m_plus_n - n) else MISS
+                for track_index, detection in enumerate(track_to_det)
             }
 
             yield sum_cost, assignments
@@ -81,51 +135,105 @@ class CostMatrix(object):
 
 class Tracker(object):
 
-    def __init__(self, states, gating_size2):
-        self.tracks = array([Track(x) for x in states[:]])
-        
-        self.ghyps = [{track.id(): 0 for track in self.tracks}]
+    def __init__(self, states):
+        self.tracks = dict()
+
+        ghyp = dict()
+        for state in states:
+            local_hypothesis = LocalHypothesis(Density(state.x, state.P))
+            track = Track(local_hypothesis)
+            self.tracks[track.id()] = track
+            ghyp[track.id()] = local_hypothesis.id()
+
+        self.ghyps = [ghyp]
         self.gweights = array([log(1.0)])
-        self.gsize2 = gating_size2
 
-    @staticmethod
-    def _new_global_hypothesis():
-        pass
+        #print("Initial")
+        #print("=> Weights = {0}".format(self.gweights))
+        #print("=> Global hypotheses =")
+        #print(self.ghyps)
 
-
-    def update_global_hypotheses(self, detection_likelihood, P_D, M):
-        
+    def update_global_hypotheses(self, lhyp_updating, P_D, M, weight_threshold):
+        detection_likelihood = {trid: lhood for trid, (lhood,_) in lhyp_updating.items()}
+        updated_lhyps = {trid: lhyps for trid, (_,lhyps) in lhyp_updating.items()}
 
         new_weights = list()
         new_ghyps = list()
 
         for ghyp, weight in zip(self.ghyps, self.gweights):
-            print("--- Global hyp {0}".format(ghyp))
+            #print("--- Global hyp {0}".format(ghyp))
             cost_matrix = CostMatrix(ghyp, detection_likelihood, log(1.0-P_D-EPS))
 
-            print(cost_matrix)
+            #print(cost_matrix)
 
             nof_best = ceil(exp(weight) * M)
 
             for sum_cost, assignment in cost_matrix.solutions(nof_best):
-                print((sum_cost, assignment))
-                
+                #print((sum_cost, assignment))
+
+                new_ghyp = dict()
+                for trid, detection in assignment.items():
+                    lhyps_from_gates = updated_lhyps[trid][ghyp[trid]]
+                    if detection in lhyps_from_gates.keys():
+                        new_ghyp[trid] = lhyps_from_gates[detection].id()
+                    else:
+                        print("Assigned detection {0} outside gate to track {1}: force miss".format(detection, trid))
+                        new_ghyp[trid] = lhyps_from_gates[MISS].id()
+
+                new_ghyps.append(new_ghyp)
                 gain = -sum_cost
                 new_weights.append(weight + gain)
 
-                for trid, detection in assignment.items():
-                    lhypnr = ghyp[trid]
-                    #z = ...
-                    
+        assert(len(new_ghyps)==len(new_weights))
+
+        new_weights, _ = _normalize_log_sum(array(new_weights))
+
+        new_weights, new_ghyps = self.hypothesis_prune(new_weights, array(new_ghyps), weight_threshold)
+        new_weights, _ = _normalize_log_sum(new_weights)
+
+        new_weights, new_ghyps = self.hypothesis_cap(new_weights, new_ghyps, M)
+        new_weights, _ = _normalize_log_sum(new_weights)
+
+        for trid, track in self.tracks.items():
+            track.select([ghyp[trid] for ghyp in new_ghyps])
+
+        self.gweights = new_weights
+        self.ghyps = new_ghyps
 
 
+        #print("=> Weights = {0}".format(self.gweights))
+        #print("=> Global hypotheses =")
+        #print(self.ghyps)
 
-            pass
+        #for track in self.tracks.values():
+        #    print(track)
 
+    @staticmethod
+    def hypothesis_prune(weights, hypotheses, threshold):
+        keep = weights >= threshold
+        return (weights[keep], hypotheses[keep])
 
-        # return [ghyp_new: (weight, {track: j})]
+    @staticmethod
+    def hypothesis_cap(weights, hypotheses, M):
+        if len(weights) > M:
+            i = argsort(weights)
+            m_largest = i[::-1][:M]
+            return (weights[m_largest], hypotheses[m_largest])
+        else:
+            return (weights, hypotheses)
 
-    def update(self, detections, P_D, lambda_c, range_c, measmodel):
+    def estimates(self):
+        index_max = np.argmax(self.gweights)
+        return {
+            trid: self.tracks[trid].estimate(lid)
+            for trid, lid in self.ghyps[index_max].items()
+        }
+
+    def predict(self, motionmodel):
+        for track in self.tracks.values():
+            track.predict(motionmodel)
+
+    def update(self, detections, P_D, lambda_c, range_c, gating_size2, measmodel):
         Z = array(detections)
         
         # For now, assume 2D volume...
@@ -133,9 +241,9 @@ class Tracker(object):
         pdf_c = 1.0 / scan_volume
         intensity_c = pdf_c * lambda_c
 
-        lhood = {track.id(): track.detection_likelihood(Z, self.gsize2, P_D, intensity_c, measmodel) 
-                 for track in self.tracks}
+        lhyp_updating = {
+            trid: track.update(Z, gating_size2, P_D, intensity_c, measmodel)
+            for trid, track in self.tracks.items()
+        }
 
-        self.update_global_hypotheses(detection_likelihood=lhood, P_D=P_D, M=10)
-
-        pass
+        self.update_global_hypotheses(lhyp_updating, P_D, M=10, weight_threshold=log(0.001))

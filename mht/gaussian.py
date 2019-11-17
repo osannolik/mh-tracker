@@ -48,6 +48,9 @@ class Density(object):
         self.x = float64(array(x))
         self.P = float64(array(P))
 
+    def __repr__(self):
+        return "<density x={0}>".format(self.x)
+
     def ln_mvnpdf(self, x):
         ln_det_sigma = log(det(self.P))
         inv_sigma = inv(self.P)
@@ -74,8 +77,10 @@ class Density(object):
         self.x, self.P = predicted.x, predicted.P
         return self
 
-    def update(self, z, measure):
-        inv_S = inv(innovation(self, measure))
+    def update(self, z, measure, inv_S=None):
+        if inv_S is None:
+            inv_S = inv(innovation(self, measure))
+
         updated = kalman_update(self, array(z), inv_S, measure)
         self.x, self.P = updated.x, updated.P
         return self
