@@ -24,7 +24,7 @@ def _normalize_log_sum(items):
 class LocalHypothesis(object):
 
     def __init__(self, state):
-        self._state = state#Density(x=state.x, P=state.P)
+        self._state = Density(x=state.x, P=state.P)
         self._lid = self.__class__._counter
         self.__class__._counter += 1
 
@@ -32,7 +32,7 @@ class LocalHypothesis(object):
         return self._lid
 
     def density(self):
-        return self._state
+        return Density(x=self._state.x, P=self._state.P)
 
     def predict(self, motionmodel):
         self._state.predict(motionmodel)
@@ -181,8 +181,7 @@ class Tracker(object):
                         new_ghyp[trid] = lhyps_from_gates[MISS].id()
 
                 new_ghyps.append(new_ghyp)
-                gain = -sum_cost
-                new_weights.append(weight + gain)
+                new_weights.append(weight - sum_cost) # gain = -sum_cost
 
         assert(len(new_ghyps)==len(new_weights))
 
@@ -246,4 +245,4 @@ class Tracker(object):
             for trid, track in self.tracks.items()
         }
 
-        self.update_global_hypotheses(lhyp_updating, P_D, M=10, weight_threshold=log(0.001))
+        self.update_global_hypotheses(lhyp_updating, P_D, M=100, weight_threshold=log(0.001))

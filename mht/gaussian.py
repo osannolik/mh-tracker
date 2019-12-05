@@ -1,4 +1,4 @@
-from numpy import (pi, log, exp, sqrt, dot, array, newaxis, zeros, float64, int)
+from numpy import (pi, log, exp, sqrt, dot, array, newaxis, zeros, float64, int, array_equal)
 from numpy.linalg import (inv, det)
 
 def mahalanobis2(x, mu, inv_sigma):
@@ -50,6 +50,11 @@ class Density(object):
 
     def __repr__(self):
         return "<density x={0}>".format(self.x)
+
+    def __eq__(self, other):
+        if isinstance(other, Density):
+            return array_equal(self.x, other.x) and array_equal(self.P, other.P)
+        return NotImplemented
 
     def ln_mvnpdf(self, x):
         ln_det_sigma = log(det(self.P))
