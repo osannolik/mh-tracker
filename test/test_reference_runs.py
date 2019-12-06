@@ -21,7 +21,7 @@ class TwoTargetsReferenceRun(unittest.TestCase):
 
         self.tracker = Tracker(states=X0)
 
-    def test_1(self):
+    def test_reference_run(self):
         measdata = self.f['measdata'].squeeze()
         thmhtest = self.f['TOMHTestimates'].squeeze()
 
