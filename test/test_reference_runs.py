@@ -8,6 +8,7 @@ from mht.tracker import (Tracker)
 from mht.gaussian import (Density)
 from mht.measmodel import (ConstantVelocity)
 from mht.motionmodel import (ConstantVelocity2D)
+from mht.scan_volume import (CartesianVolume)
 
 class TwoTargetsReferenceRun(unittest.TestCase):
 
@@ -19,7 +20,11 @@ class TwoTargetsReferenceRun(unittest.TestCase):
             Density(x=np.array([0.0, 10.0, 1.0, 0.0]), P=np.eye(4))
         ]
 
-        self.tracker = Tracker(states=X0)
+        self.tracker = Tracker(
+            states=X0,
+            max_nof_hyps = 100,
+            hyp_weight_threshold = np.log(0.001)
+        )
 
     def test_reference_run(self):
         measdata = self.f['measdata'].squeeze()
@@ -31,17 +36,19 @@ class TwoTargetsReferenceRun(unittest.TestCase):
         P_G = 0.99 # size in percentage
         gating_size2 = chi2.ppf(P_G, measmodel.dimension())
 
+        volume = CartesianVolume(
+            ranges = np.array([
+                [-10.0, 100.0],
+                [-10.0, 10.0]
+            ]),
+            P_D=0.9,
+            clutter_lambda = 1.0
+        )
+
         for k, Z in enumerate(measdata):
             detections = list(Z.T)
 
-            self.tracker.update(
-                detections,
-                P_D=0.90,
-                lambda_c=1.0,
-                range_c=(-10, 100, -10, 10),
-                gating_size2=gating_size2,
-                measmodel=measmodel
-            )
+            self.tracker.update(detections, volume, gating_size2, measmodel)
 
             est = self.tracker.estimates()
 

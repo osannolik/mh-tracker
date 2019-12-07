@@ -135,7 +135,10 @@ class CostMatrix(object):
 
 class Tracker(object):
 
-    def __init__(self, states):
+    def __init__(self, states, max_nof_hyps, hyp_weight_threshold):
+        self._M = max_nof_hyps
+        self._weight_threshold = hyp_weight_threshold
+        
         self.tracks = dict()
 
         ghyp = dict()
@@ -232,17 +235,14 @@ class Tracker(object):
         for track in self.tracks.values():
             track.predict(motionmodel)
 
-    def update(self, detections, P_D, lambda_c, range_c, gating_size2, measmodel):
+    def update(self, detections, volume, gating_size2, measmodel):
         Z = array(detections)
         
-        # For now, assume 2D volume...
-        scan_volume = (range_c[1]-range_c[0]) * (range_c[3]-range_c[0])
-        pdf_c = 1.0 / scan_volume
-        intensity_c = pdf_c * lambda_c
+        intensity_c = volume.clutter_intensity()
 
         lhyp_updating = {
-            trid: track.update(Z, gating_size2, P_D, intensity_c, measmodel)
+            trid: track.update(Z, gating_size2, volume.P_D(), intensity_c, measmodel)
             for trid, track in self.tracks.items()
         }
 
-        self.update_global_hypotheses(lhyp_updating, P_D, M=100, weight_threshold=log(0.001))
+        self.update_global_hypotheses(lhyp_updating, volume.P_D(), self._M, self._weight_threshold)
