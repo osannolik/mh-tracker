@@ -246,3 +246,10 @@ class Tracker(object):
         }
 
         self.update_global_hypotheses(lhyp_updating, volume.P_D(), self._M, self._weight_threshold)
+
+    def process(self, detections, volume, gating_size2, measmodel, motionmodel):
+        self.update(detections, volume, gating_size2, measmodel)
+        est = self.estimates()
+        self.predict(motionmodel)
+
+        return est
