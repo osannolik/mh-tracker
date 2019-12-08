@@ -1,5 +1,5 @@
-from numpy import (pi, log, exp, sqrt, dot, array, newaxis, zeros, float64, int, array_equal)
-from numpy.linalg import (inv, det)
+from numpy import (arctan2, degrees, pi, log, exp, sqrt, dot, array, newaxis, zeros, float64, int, array_equal)
+from numpy.linalg import (inv, eigh, det)
 
 def mahalanobis2(x, mu, inv_sigma):
     d = x-mu
@@ -55,6 +55,23 @@ class Density(object):
         if isinstance(other, Density):
             return array_equal(self.x, other.x) and array_equal(self.P, other.P)
         return NotImplemented
+
+    def cov_ellipse(self, measure=None, nstd=2):
+        if measure is not None:
+            H = measure.H(self.x)
+            Pz = H @ self.P @ H.T
+            z = measure.h(self.x)
+        else:
+            Pz = self.P[:]
+            z = self.x[:]
+        
+        eigvals, vecs = eigh(Pz)
+        order = eigvals.argsort()[::-1]
+        eigvals, vecs = eigvals[order], vecs[:,order]
+        theta = degrees(arctan2(*vecs[:, 0][::-1]))
+        r1, r2 = nstd * sqrt(eigvals)
+
+        return z, r1, r2, theta
 
     def ln_mvnpdf(self, x):
         ln_det_sigma = log(det(self.P))

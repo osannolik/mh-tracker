@@ -1,6 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
+from matplotlib.patches import Ellipse
+
 from .gaussian import (Density)
 
 def to_state(obj):
@@ -21,6 +23,19 @@ def to_2d(objects, measmodel=None):
         {i: h(to_state(x)) for i, x in enumerate(objs)}
         for objs in objects
     ]
+
+def covariance_ellipse_2d(density, measmodel, nstd=2, **kwargs):
+    z, r1, r2, theta = density.cov_ellipse(measmodel, nstd)
+    ellip = Ellipse(xy=z, width=2*r1, height=2*r2, angle=theta, **kwargs)
+    ellip.set_alpha(0.3)
+    plt.gca().add_artist(ellip)
+
+    return ellip
+
+def covariances_2d(objects, measmodel, nstd=2, **kwargs):
+    for objs in objects:
+        for obj in objs.values():
+            covariance_ellipse_2d(obj, measmodel, nstd, **kwargs)
 
 def measurements_2d(detections, **kwargs):
     meas = to_2d(detections)
