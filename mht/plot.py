@@ -58,3 +58,6 @@ def trajectory_2d(objects, measmodel=None, **kwargs):
             [zx[t,i], zy[t,i]] = z
 
     plt.plot(zx, zy, **kwargs)
+
+def show():
+    plt.show()

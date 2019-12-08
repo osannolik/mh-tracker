@@ -10,7 +10,11 @@ from mht.measmodel import (ConstantVelocity)
 from mht.motionmodel import (ConstantVelocity2D)
 from mht.scan_volume import (CartesianVolume)
 
+import mht.plot as plot
+
 class TwoTargetsReferenceRun(unittest.TestCase):
+
+    _show_plot = False
 
     def setUp(self):
         self.f = scipy.io.loadmat('test/measdata_2tgts_man_ref.mat')
@@ -30,6 +34,8 @@ class TwoTargetsReferenceRun(unittest.TestCase):
         measdata = self.f['measdata'].squeeze()
         thmhtest = self.f['TOMHTestimates'].squeeze()
 
+        measurements = [list(z.T) for z in measdata]
+
         measmodel = ConstantVelocity(sigma=0.2)
         motionmodel = ConstantVelocity2D(T=1.0, sigma=0.1)
 
@@ -45,12 +51,13 @@ class TwoTargetsReferenceRun(unittest.TestCase):
             clutter_lambda = 1.0
         )
 
-        for k, Z in enumerate(measdata):
-            detections = list(Z.T)
+        estimates = list()
+        for k, Z in enumerate(measurements):
 
-            self.tracker.update(detections, volume, gating_size2, measmodel)
+            self.tracker.update(Z, volume, gating_size2, measmodel)
 
             est = self.tracker.estimates()
+            estimates.append(est)
 
             for trid, state in est.items():
                 # assume track-id is naturals 0,1,...
@@ -61,6 +68,12 @@ class TwoTargetsReferenceRun(unittest.TestCase):
                 ))
 
             self.tracker.predict(motionmodel)
+
+        if self._show_plot:
+            plot.measurements_2d(measurements, marker='.', color='k')
+            plot.trajectory_2d(estimates, measmodel)
+            plot.covariances_2d(estimates, measmodel)
+            plot.show()
 
 if __name__ == '__main__':
     unittest.main()
