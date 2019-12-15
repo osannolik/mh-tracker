@@ -37,6 +37,12 @@ class LocalHypothesis(object):
     def predict(self, motionmodel):
         self._state.predict(motionmodel)
 
+    def spawn_hit(self, z, measmodel, inv_S):
+        return LocalHypothesis(self.density().update(z, measmodel, inv_S))
+
+    def spawn_miss(self):
+        return LocalHypothesis(self.density())
+
     def __repr__(self):
         return "<loc_hyp {0}: {1}>".format(self.id(), self._state)
 
@@ -81,10 +87,10 @@ class Track(object):
             lhood[h] = np.full(len(Z), LOG_0)
             lhood[h][in_gate_indices] = lh + log(P_D+EPS) - log(intensity_c+EPS)
             new_lhyps[h] = {
-                j: LocalHypothesis(Density(state.x, state.P).update(Z[j], measmodel, inv_S))
+                j: lhyp.spawn_hit(Z[j], measmodel, inv_S)
                 for j in in_gate_indices
             }
-            new_lhyps[h][MISS] = LocalHypothesis(Density(state.x, state.P))
+            new_lhyps[h][MISS] = lhyp.spawn_miss()
 
         for _, det_to_new_lhyp in new_lhyps.items():
             for lhyp in det_to_new_lhyp.values():
