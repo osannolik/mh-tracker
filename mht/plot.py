@@ -47,14 +47,18 @@ def trajectory_2d(objects, measmodel=None, **kwargs):
 
     objects_meas = to_2d(objects, measmodel)
 
-    n_objs = max([len(objs) for objs in objects_meas])
+    obj_index_to_id = list(set([ids for objs in objects_meas for ids in objs.keys()]))
+    id_to_obj_index = {id: i for i, id in enumerate(obj_index_to_id)}
+
+    n_objs = len(obj_index_to_id)
     t_length = len(objects_meas)
 
     zx = np.full((t_length, n_objs), np.nan)
     zy = np.full(zx.shape, np.nan)
 
     for t, objs in enumerate(objects_meas):
-        for i, z in objs.items():
+        for id, z in objs.items():
+            i = id_to_obj_index[id]
             [zx[t,i], zy[t,i]] = z
 
     plt.plot(zx, zy, **kwargs)

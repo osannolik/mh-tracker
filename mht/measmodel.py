@@ -19,7 +19,11 @@ class ConstantVelocity(object):
 
     def h(self, x):
         return dot(self.H(x), x)
-    
+
+    def inv_h(self, z):
+        # (A.T @ np.linalg.inv(A @ A.T)) @ z
+        return array([z[0], z[1], 0.0, 0.0])
+
 class CoordinatedTurn(object):
 
     def __init__(self, sigma):
