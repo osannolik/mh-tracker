@@ -166,20 +166,21 @@ class Tracker(object):
         self.gweights = array([log(1.0)])
 
     def create_track_trees(self, detections, intensity_c, intensity_new, measmodel):
-        total_init_cost = 0.0
+        llr0 = log(intensity_new+EPS) - log(intensity_c+EPS)
+
         new_ghyp = dict()
         for z in detections:
             x0 = measmodel.inv_h(z)
             R = measmodel.R()
             P0 = np.diag([R[0,0], R[1,1], 1.0, 1.0])
-            llr0 = log(intensity_new+EPS) - log(intensity_c+EPS)
-            total_init_cost += -llr0
             new_lhyp = LocalHypothesis(Density(x0, P0), llr0)
             new_track = Track(new_lhyp)
 
             self.tracks[new_track.id()] = new_track
 
             new_ghyp[new_track.id()] = new_lhyp.id()
+
+        total_init_cost = len(new_ghyp) * -llr0
 
         return new_ghyp, total_init_cost
 
@@ -274,6 +275,11 @@ class Tracker(object):
         }
 
         self.update_global_hypotheses(lhyp_updating, Z, measmodel, volume.P_D(), intensity_c, intensity_new, self._M, self._weight_threshold)
+
+        trids_in_ghyps = set([trid for ghyp in self.ghyps for trid in ghyp.keys()])
+        unused_tracks = set(self.tracks.keys()) - trids_in_ghyps
+        for trid in unused_tracks:
+            del self.tracks[trid]
 
     def process(self, detections, volume, gating_size2, measmodel, motionmodel):
         self.update(detections, volume, gating_size2, measmodel)
