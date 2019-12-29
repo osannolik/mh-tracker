@@ -93,12 +93,6 @@ class Track(object):
 
     def __init__(self, local_hypothesis):
         self._lhyps = {local_hypothesis.id(): local_hypothesis}
-        #n_false_alarms = poisson(clutter_lambda)
-        #n_false_track_confs = 0.05
-        false_track_conf_prob = 0.05 #n_false_alarms / n_false_track_confs
-        true_track_term_prob = 0.001
-        self._death_llr_threshold = log(true_track_term_prob/(1.0-false_track_conf_prob))
-        # print(self._death_llr_threshold)
         self._trid = self.__class__._counter
         self.__class__._counter += 1
 
@@ -126,7 +120,13 @@ class Track(object):
     def dead_local_hyps(self):
         return [
             lid for lid, lhyp in self._lhyps.items() 
-            if lhyp.nof_results() > 3 and not lhyp.m_of_n_hits(m=3)
+            if lhyp.nof_results() > 2 and not lhyp.m_of_n_hits(m=2)
+        ]
+
+    def confirmed_local_hyps(self):
+        return [
+            lid for lid, lhyp in self._lhyps.items() 
+            if lhyp.nof_results() > 2 and lhyp.m_of_n_hits(m=2)
         ]
 
     def terminate(self, lhyp_ids):
@@ -324,11 +324,12 @@ class Tracker(object):
         else:
             return (weights, hypotheses)
 
-    def estimates(self):
+    def estimates(self, only_confirmed=True):
         index_max = np.argmax(self.gweights)
         return {
             trid: self.tracks[trid].estimate(lid)
             for trid, lid in self.ghyps[index_max].items()
+            if not only_confirmed or lid in self.tracks[trid].confirmed_local_hyps()
         }
 
     def predict(self, motionmodel):
@@ -337,10 +338,6 @@ class Tracker(object):
 
     def terminate_tracks(self):
         terminate_lids = {trid: track.dead_local_hyps() for trid, track in self.tracks.items()}
-
-        for trid, lids_term in terminate_lids.items():
-            for lid in lids_term:
-                print("Terminate LocalHypothesis {} for track {}".format(lid, trid))
 
         ghyps_updated = list()
         gweights_updated =list()
@@ -390,9 +387,10 @@ class Tracker(object):
         return est
 
     def debug_print(self, t):
-        print("[t = {}]".format(t))
-        print("    Weights =")
-        print(self.gweights)
+        pass
+        #print("[t = {}]".format(t))
+        #print("    Weights =")
+        #print(self.gweights)
 
-        for trid in self.estimates().keys():
-            print("    Track {} LLR = {}".format(trid, self.tracks[trid].log_likelihood_ratio()))
+        #for trid in self.estimates().keys():
+        #    print("    Track {} LLR = {}".format(trid, self.tracks[trid].log_likelihood_ratio()))
