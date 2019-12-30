@@ -14,7 +14,9 @@ LOG_0 = -LARGE #log(EPS) #np.finfo('d').min
 MISS = None
 
 def _normalize_log_sum(items):
-    if len(items) == 1:
+    if len(items) == 0:
+        return (items, None)
+    elif len(items) == 1:
         log_sum = items[0]
     else:
         i = sorted(range(len(items)), key=lambda k: items[k], reverse=True)
@@ -325,12 +327,15 @@ class Tracker(object):
             return (weights, hypotheses)
 
     def estimates(self, only_confirmed=True):
-        index_max = np.argmax(self.gweights)
-        return {
-            trid: self.tracks[trid].estimate(lid)
-            for trid, lid in self.ghyps[index_max].items()
-            if not only_confirmed or lid in self.tracks[trid].confirmed_local_hyps()
-        }
+        if len(self.gweights) > 0:
+            index_max = np.argmax(self.gweights)
+            return {
+                trid: self.tracks[trid].estimate(lid)
+                for trid, lid in self.ghyps[index_max].items()
+                if not only_confirmed or lid in self.tracks[trid].confirmed_local_hyps()
+            }
+        else:
+            return {}
 
     def predict(self, motionmodel):
         for track in self.tracks.values():
@@ -340,7 +345,7 @@ class Tracker(object):
         terminate_lids = {trid: track.dead_local_hyps() for trid, track in self.tracks.items()}
 
         ghyps_updated = list()
-        gweights_updated =list()
+        gweights_updated = list()
         for w, ghyp in zip(self.gweights, self.ghyps):
             ghyp_pruned = {
                 trid: lid 
@@ -351,8 +356,9 @@ class Tracker(object):
                 for trid, lid in ghyp.items() if lid in terminate_lids[trid]
             ]
 
-            ghyps_updated.append(ghyp_pruned)
-            gweights_updated.append(w - sum(llhood_pruned))
+            if ghyp_pruned:
+                ghyps_updated.append(ghyp_pruned)
+                gweights_updated.append(w - sum(llhood_pruned))
 
         for trid, track in self.tracks.items():
             track.terminate(terminate_lids[trid])
@@ -389,8 +395,11 @@ class Tracker(object):
     def debug_print(self, t):
         pass
         #print("[t = {}]".format(t))
+        #print(len(self.gweights))
         #print("    Weights =")
         #print(self.gweights)
 
         #for trid in self.estimates().keys():
         #    print("    Track {} LLR = {}".format(trid, self.tracks[trid].log_likelihood_ratio()))
+
+        #print("")
