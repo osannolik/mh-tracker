@@ -110,6 +110,11 @@ class Track(object):
         else:
             return self._lhyps[lhyp_id].density()
 
+    def is_within(self, volume, measmodel):
+        # Margin using covariance?
+        zbar = [measmodel.h(density.x) for density in self.estimate()]
+        return array([volume.is_within(z) for z in zbar]).all()
+
     def log_likelihood_ratio(self, lhyp_id=None):
         if lhyp_id is None:
             return [lhyp.log_likelihood_ratio() for lhyp in self._lhyps.values()]
@@ -151,22 +156,22 @@ class Track(object):
         new_lhyps = dict()
         lhood = dict()
 
-        for h, lhyp in self._lhyps.items():
+        for lid, lhyp in self._lhyps.items():
             state = lhyp.density()
             S = innovation(state, measmodel)
             inv_S = inv(S)
             (z_in_gate, in_gate_indices) = state.gating(Z, measmodel, gating_size2, inv_S)
             lh = array([predicted_likelihood(state, z, S, measmodel) for z in z_in_gate])
-            lhood[h] = np.full(len(Z), LOG_0)
-            lhood[h][in_gate_indices] = lh + log(volume.P_D()+EPS) - log(volume.clutter_intensity()+EPS)
-            new_lhyps[h] = {
-                j: LocalHypothesis.new_from_hit(lhyp, Z[j], measmodel, lhood[h][j], inv_S)
+            lhood[lid] = np.full(len(Z), LOG_0)
+            lhood[lid][in_gate_indices] = lh + log(volume.P_D()+EPS) - log(volume.clutter_intensity()+EPS)
+            new_lhyps[lid] = {
+                j: LocalHypothesis.new_from_hit(lhyp, Z[j], measmodel, lhood[lid][j], inv_S)
                 for j in in_gate_indices
             }
             P_G = 1.0
-            new_lhyps[h][MISS] = LocalHypothesis.new_from_miss(lhyp, log(1.0 - volume.P_D()*P_G + EPS))
+            new_lhyps[lid][MISS] = LocalHypothesis.new_from_miss(lhyp, log(1.0 - volume.P_D()*P_G + EPS))
 
-        for _, det_to_new_lhyp in new_lhyps.items():
+        for det_to_new_lhyp in new_lhyps.values():
             for lhyp in det_to_new_lhyp.values():
                 self._lhyps[lhyp.id()] = lhyp
 
@@ -275,11 +280,7 @@ class Tracker(object):
                     new_ghyp = dict()
                     for trid, detection in assignment.items():
                         lhyps_from_gates = updated_lhyps[trid][ghyp[trid]]
-                        if detection in lhyps_from_gates.keys():
-                            new_ghyp[trid] = lhyps_from_gates[detection].id()
-                        else:
-                            print("Assigned detection {0} outside gate to track {1}: force miss".format(detection, trid))
-                            new_ghyp[trid] = lhyps_from_gates[MISS].id()
+                        new_ghyp[trid] = lhyps_from_gates[detection].id()
 
                     init_ghyp, total_init_cost = \
                         self.create_track_trees(Z[unassigned_detections], volume, measmodel)
@@ -378,7 +379,7 @@ class Tracker(object):
 
         lhyp_updating = {
             trid: track.update(Z, gating_size2, volume, measmodel)
-            for trid, track in self.tracks.items()
+            for trid, track in self.tracks.items() #if track.is_within(volume, measmodel)
         }
 
         self.update_global_hypotheses(lhyp_updating, Z, measmodel, volume, self._M, self._weight_threshold)
