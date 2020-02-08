@@ -1,4 +1,4 @@
-from collections import deque
+from collections import (deque, OrderedDict)
 
 import numpy as np
 from numpy import (array, argsort, ceil, exp, eye, ones, log, vstack, hstack, int)
@@ -104,6 +104,12 @@ class Track(object):
     def id(self):
         return self._trid
 
+    def __call__(self, lhyp_id):
+        if lhyp_id in self._lhyps.keys():
+            return self._lhyps[lhyp_id]
+        else:
+            return None
+
     def estimate(self, lhyp_id=None):
         if lhyp_id is None:
             return [lhyp.density() for lhyp in self._lhyps.values()]
@@ -113,7 +119,7 @@ class Track(object):
     def is_within(self, volume, measmodel):
         # Margin using covariance?
         zbar = [measmodel.h(density.x) for density in self.estimate()]
-        return array([volume.is_within(z) for z in zbar]).all()
+        return array([volume.is_within(z) for z in zbar]).any()
 
     def log_likelihood_ratio(self, lhyp_id=None):
         if lhyp_id is None:
@@ -154,7 +160,6 @@ class Track(object):
 
     def update(self, Z, gating_size2, volume, measmodel):
         new_lhyps = dict()
-        lhood = dict()
 
         for lid, lhyp in self._lhyps.items():
             state = lhyp.density()
@@ -162,39 +167,74 @@ class Track(object):
             inv_S = inv(S)
             (z_in_gate, in_gate_indices) = state.gating(Z, measmodel, gating_size2, inv_S)
             lh = array([predicted_likelihood(state, z, S, measmodel) for z in z_in_gate])
-            lhood[lid] = np.full(len(Z), LOG_0)
-            lhood[lid][in_gate_indices] = lh + log(volume.P_D()+EPS) - log(volume.clutter_intensity()+EPS)
-            new_lhyps[lid] = {
-                j: LocalHypothesis.new_from_hit(lhyp, Z[j], measmodel, lhood[lid][j], inv_S)
-                for j in in_gate_indices
-            }
+            lhood = np.full(len(Z), LOG_0)
+            lhood[in_gate_indices] = lh + log(volume.P_D()+EPS) - log(volume.clutter_intensity()+EPS)
+            new_lhyps[lid] = OrderedDict([
+                (j, LocalHypothesis.new_from_hit(lhyp, Z[j], measmodel, lhood[j], inv_S)
+                    if j in in_gate_indices else
+                    None)
+                for j in range(len(Z))
+            ])
             P_G = 1.0
             new_lhyps[lid][MISS] = LocalHypothesis.new_from_miss(lhyp, log(1.0 - volume.P_D()*P_G + EPS))
 
-        for det_to_new_lhyp in new_lhyps.values():
-            for lhyp in det_to_new_lhyp.values():
-                self._lhyps[lhyp.id()] = lhyp
+        # for det_to_new_lhyp in new_lhyps.values():
+        #     for lhyp in det_to_new_lhyp.values():
+        #         self._lhyps[lhyp.id()] = lhyp
 
-        return lhood, new_lhyps
+        return new_lhyps
 
 Track._counter = 0
 
+class TrackUpdate(object):
+    
+    def __init__(self):
+        pass
+
 class CostMatrix(object):
 
-    def __init__(self, global_hypothesis, detection_likelihood, miss_likelihood):
-        self._index_to_trid = list(global_hypothesis.keys())
+    def __init__(self, global_hypothesis, track_updates):
+        updated_hyps = lambda trid: track_updates[trid][global_hypothesis[trid]]
+
+        self._index_to_trid = [
+            trid for trid in global_hypothesis.keys() if trid in track_updates.keys()
+        ]
+
+        self._index_to_hit_det = {
+            trid: [j for j in updated_hyps(trid).keys() if j is not MISS]
+            for trid in self._index_to_trid
+        }
+
+        hit_lhyps = {
+            trid: [updated_hyps(trid)[j] for j in self._index_to_hit_det[trid]]
+            for trid in self._index_to_trid
+        }
 
         c_track_detection = vstack(tuple(
-            (detection_likelihood[trid][global_hypothesis[trid]] 
-            for trid in self._index_to_trid)
+            (array([LOG_0 if lhyp is None else lhyp.log_likelihood() for lhyp in updated_hyps[trid]])
+             for trid in track_updates.keys() if trid in global_hypothesis.keys())
         ))
-        
-        n, _ = c_track_detection.shape
 
-        c_miss = np.full((n,n), LOG_0)
+
+        c_track_detection = vstack(tuple(
+            (array([LOG_0 if lhyp is None else lhyp.log_likelihood() for lhyp in hit_lhyps[trid]])
+             for trid in self._index_to_trid)
+        ))
+
+        miss_likelihoods = array([
+            updated_hyps(trid)[MISS].log_likelihood() for trid in self._index_to_trid
+        ])
+
+        c_miss = np.full(2*(len(miss_likelihood),), LOG_0)
         np.fill_diagonal(c_miss, miss_likelihood)
 
         self._matrix = -1.0 * hstack((c_track_detection, c_miss))
+
+    def _to_trid(self, track_index):
+        return self._index_to_trid[track_index]
+    
+    def _to_hit_det(self, track_index, det_index):
+        return self._index_to_hit_det[self._to_trid(track_index)][det_index]
 
     def solutions(self, max_nof_solutions):
         murty_solver = Murty(self._matrix)
@@ -208,20 +248,39 @@ class CostMatrix(object):
             n, m_plus_n = self._matrix.shape
 
             assignments = {
-                self._index_to_trid[track_index]: 
-                detection if detection in range(m_plus_n - n) else MISS
-                for track_index, detection in enumerate(track_to_det)
+                self._to_trid[track_index]: 
+                self._to_hit_det(track_index, det_index) if det_index in range(m_plus_n - n) else MISS
+                for track_index, det_index in enumerate(track_to_det)
             }
 
             unassigned_detections = [
-                detection for detection in range(m_plus_n - n)
-                if detection not in track_to_det
+                det_index for det_index in range(m_plus_n - n)
+                if det_index not in track_to_det
             ]
 
             yield sum_cost, assignments, array(unassigned_detections, dtype=int)
 
     def __repr__(self):
-        return "{0}".format(self._matrix)
+        return str(self._matrix)
+
+# class GlobalHypothesis(object):
+
+#     def __init__(self, track_lhyp, weight):
+#         self._lhyps = dict(track_lhyp)
+#         self._weight = weight
+
+#     @classmethod
+#     def update(cls, self, tracks, detection_likelihood, volume):
+        
+#         unscanned_trids = [
+#             trid for trid in self._lhyps.keys() if trid not in detection_likelihood.keys()
+#         ]
+
+
+
+
+#         new_lhyps = list()
+#         return cls(new_lhyps)
 
 class Tracker(object):
 
@@ -263,24 +322,42 @@ class Tracker(object):
 
         return new_ghyp, total_init_cost
 
-    def update_global_hypotheses(self, lhyp_updating, Z, measmodel, volume, M, weight_threshold):
+    def update_global_hypotheses(self, track_updates, Z, measmodel, volume, M, weight_threshold):
         new_weights = list()
         new_ghyps = list()
 
         if self.tracks:
-            detection_likelihood = {trid: lhood for trid, (lhood,_) in lhyp_updating.items()}
-            updated_lhyps = {trid: lhyps for trid, (_,lhyps) in lhyp_updating.items()}
-
             for ghyp, weight in zip(self.ghyps, self.gweights):
-                cost_matrix = CostMatrix(ghyp, detection_likelihood, log(1.0-volume.P_D()-EPS))
+                cost_matrix = CostMatrix(ghyp, track_updates)
+
+                unscanned = [
+                    trid for trid in ghyp.keys() if trid not in track_updates.keys()
+                ]
+
+                unscanned_lhoods = self.
 
                 nof_best = ceil(exp(weight) * M)
 
                 for sum_cost, assignment, unassigned_detections in cost_matrix.solutions(nof_best):
+
+
                     new_ghyp = dict()
                     for trid, detection in assignment.items():
                         lhyps_from_gates = updated_lhyps[trid][ghyp[trid]]
                         new_ghyp[trid] = lhyps_from_gates[detection].id()
+
+                    sum_calc = 0.0
+                    for trid, lid in ghyp.items():
+                        if trid in assignment.keys():
+                            lhyps_from_gates = updated_lhyps[trid][lid]
+                            detection = assignment[trid]
+                            sum_calc += lhyps_from_gates[detection].log_likelihood()
+                        else:
+                            # not part of assignment problem
+                            sum_calc += self.tracks[trid].log_likelihood(lid)
+
+                    print("sum_cost = {}".format(sum_cost))
+                    print("sum_calc = {}".format(-sum_calc))
 
                     init_ghyp, total_init_cost = \
                         self.create_track_trees(Z[unassigned_detections], volume, measmodel)
@@ -377,10 +454,10 @@ class Tracker(object):
     def update(self, detections, volume, gating_size2, measmodel):
         Z = array(detections)
 
-        lhyp_updating = {
-            trid: track.update(Z, gating_size2, volume, measmodel)
+        lhyp_updating = OrderedDict([
+            (trid, track.update(Z, gating_size2, volume, measmodel))
             for trid, track in self.tracks.items() #if track.is_within(volume, measmodel)
-        }
+        ])
 
         self.update_global_hypotheses(lhyp_updating, Z, measmodel, volume, self._M, self._weight_threshold)
 
