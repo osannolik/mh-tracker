@@ -110,6 +110,9 @@ class Track(object):
         else:
             return None
 
+    def add(self, local_hypothesis):
+        self._lhyps[local_hypothesis.id()] = local_hypothesis
+
     def estimate(self, lhyp_id=None):
         if lhyp_id is None:
             return [lhyp.density() for lhyp in self._lhyps.values()]
@@ -178,51 +181,28 @@ class Track(object):
             P_G = 1.0
             new_lhyps[lid][MISS] = LocalHypothesis.new_from_miss(lhyp, log(1.0 - volume.P_D()*P_G + EPS))
 
-        # for det_to_new_lhyp in new_lhyps.values():
-        #     for lhyp in det_to_new_lhyp.values():
-        #         self._lhyps[lhyp.id()] = lhyp
-
         return new_lhyps
 
 Track._counter = 0
 
-class TrackUpdate(object):
-    
-    def __init__(self):
-        pass
-
 class CostMatrix(object):
 
     def __init__(self, global_hypothesis, track_updates):
-        updated_hyps = lambda trid: track_updates[trid][global_hypothesis[trid]]
+        self._included_trids = [trid for trid in track_updates.keys() if trid in global_hypothesis.keys()]
 
-        self._index_to_trid = [
-            trid for trid in global_hypothesis.keys() if trid in track_updates.keys()
-        ]
+        new_lhyps = lambda trid: track_updates[trid][global_hypothesis[trid]]
 
-        self._index_to_hit_det = {
-            trid: [j for j in updated_hyps(trid).keys() if j is not MISS]
-            for trid in self._index_to_trid
-        }
-
-        hit_lhyps = {
-            trid: [updated_hyps(trid)[j] for j in self._index_to_hit_det[trid]]
-            for trid in self._index_to_trid
-        }
+        hit_likelihoods = lambda trid: array([
+            LOG_0 if lhyp is None else lhyp.log_likelihood()
+            for detection, lhyp in new_lhyps(trid).items() if detection is not MISS
+        ])
 
         c_track_detection = vstack(tuple(
-            (array([LOG_0 if lhyp is None else lhyp.log_likelihood() for lhyp in updated_hyps[trid]])
-             for trid in track_updates.keys() if trid in global_hypothesis.keys())
+            (hit_likelihoods(trid) for trid in self._included_trids)
         ))
 
-
-        c_track_detection = vstack(tuple(
-            (array([LOG_0 if lhyp is None else lhyp.log_likelihood() for lhyp in hit_lhyps[trid]])
-             for trid in self._index_to_trid)
-        ))
-
-        miss_likelihoods = array([
-            updated_hyps(trid)[MISS].log_likelihood() for trid in self._index_to_trid
+        miss_likelihood = array([
+            new_lhyps(trid)[MISS].log_likelihood() for trid in self._included_trids
         ])
 
         c_miss = np.full(2*(len(miss_likelihood),), LOG_0)
@@ -230,14 +210,11 @@ class CostMatrix(object):
 
         self._matrix = -1.0 * hstack((c_track_detection, c_miss))
 
-    def _to_trid(self, track_index):
-        return self._index_to_trid[track_index]
-    
-    def _to_hit_det(self, track_index, det_index):
-        return self._index_to_hit_det[self._to_trid(track_index)][det_index]
-
     def solutions(self, max_nof_solutions):
         murty_solver = Murty(self._matrix)
+
+        # Get back trid and detection nr from matrix indices
+        to_trid = lambda t: self._included_trids[t]
 
         for _ in range(int(max_nof_solutions)):
             is_ok, sum_cost, track_to_det = murty_solver.draw()
@@ -248,8 +225,7 @@ class CostMatrix(object):
             n, m_plus_n = self._matrix.shape
 
             assignments = {
-                self._to_trid[track_index]: 
-                self._to_hit_det(track_index, det_index) if det_index in range(m_plus_n - n) else MISS
+                to_trid(track_index): det_index if det_index in range(m_plus_n - n) else MISS
                 for track_index, det_index in enumerate(track_to_det)
             }
 
@@ -262,25 +238,6 @@ class CostMatrix(object):
 
     def __repr__(self):
         return str(self._matrix)
-
-# class GlobalHypothesis(object):
-
-#     def __init__(self, track_lhyp, weight):
-#         self._lhyps = dict(track_lhyp)
-#         self._weight = weight
-
-#     @classmethod
-#     def update(cls, self, tracks, detection_likelihood, volume):
-        
-#         unscanned_trids = [
-#             trid for trid in self._lhyps.keys() if trid not in detection_likelihood.keys()
-#         ]
-
-
-
-
-#         new_lhyps = list()
-#         return cls(new_lhyps)
 
 class Tracker(object):
 
@@ -327,37 +284,28 @@ class Tracker(object):
         new_ghyps = list()
 
         if self.tracks:
+            if not track_updates:
+                return
+
             for ghyp, weight in zip(self.ghyps, self.gweights):
                 cost_matrix = CostMatrix(ghyp, track_updates)
-
-                unscanned = [
-                    trid for trid in ghyp.keys() if trid not in track_updates.keys()
-                ]
-
-                unscanned_lhoods = self.
 
                 nof_best = ceil(exp(weight) * M)
 
                 for sum_cost, assignment, unassigned_detections in cost_matrix.solutions(nof_best):
-
-
                     new_ghyp = dict()
-                    for trid, detection in assignment.items():
-                        lhyps_from_gates = updated_lhyps[trid][ghyp[trid]]
-                        new_ghyp[trid] = lhyps_from_gates[detection].id()
-
-                    sum_calc = 0.0
+                    new_weight = -sum_cost # gain = -sum_cost
                     for trid, lid in ghyp.items():
                         if trid in assignment.keys():
-                            lhyps_from_gates = updated_lhyps[trid][lid]
+                            lhyps_from_gates = track_updates[trid][lid]
                             detection = assignment[trid]
-                            sum_calc += lhyps_from_gates[detection].log_likelihood()
+                            lhyp = lhyps_from_gates[detection]
+                            new_ghyp[trid] = lhyp.id()
+                            self.tracks[trid].add(lhyp)
                         else:
-                            # not part of assignment problem
-                            sum_calc += self.tracks[trid].log_likelihood(lid)
-
-                    print("sum_cost = {}".format(sum_cost))
-                    print("sum_calc = {}".format(-sum_calc))
+                            # not part of assignment problem, keep the old
+                            new_ghyp[trid] = lid
+                            new_weight += self.tracks[trid].log_likelihood(lid)
 
                     init_ghyp, total_init_cost = \
                         self.create_track_trees(Z[unassigned_detections], volume, measmodel)
@@ -365,7 +313,7 @@ class Tracker(object):
                     new_ghyp.update(init_ghyp)
 
                     new_ghyps.append(new_ghyp)
-                    new_weights.append(weight - sum_cost - total_init_cost) # gain = -sum_cost
+                    new_weights.append(new_weight - total_init_cost)
 
         else:
             init_ghyp, total_init_cost = self.create_track_trees(Z, volume, measmodel)
@@ -386,6 +334,10 @@ class Tracker(object):
         # Kind of 1-scan MHT pruning...
         for trid, track in self.tracks.items():
             track.select([ghyp[trid] for ghyp in new_ghyps if trid in ghyp.keys()])
+
+        # Remove duplicate global hyps
+#        hashable_ghyps = [tuple(d.items()) for d in new_ghyps]
+#        unique_index = [hashable_ghyps.index(d) for d in set(hashable_ghyps)]
 
         self.gweights = new_weights
         self.ghyps = new_ghyps
@@ -454,12 +406,12 @@ class Tracker(object):
     def update(self, detections, volume, gating_size2, measmodel):
         Z = array(detections)
 
-        lhyp_updating = OrderedDict([
+        track_updates = OrderedDict([
             (trid, track.update(Z, gating_size2, volume, measmodel))
-            for trid, track in self.tracks.items() #if track.is_within(volume, measmodel)
+            for trid, track in self.tracks.items() if track.is_within(volume, measmodel)
         ])
 
-        self.update_global_hypotheses(lhyp_updating, Z, measmodel, volume, self._M, self._weight_threshold)
+        self.update_global_hypotheses(track_updates, Z, measmodel, volume, self._M, self._weight_threshold)
 
         self.terminate_tracks()
 
