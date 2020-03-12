@@ -60,6 +60,12 @@ class LocalHypothesis(object):
     def m_of_n_hits(self, m):
         return self._hit_history.count(True) >= m
 
+    def is_confirmed(self):
+        return self.nof_results() > 2 and self.m_of_n_hits(m=2)
+
+    def is_dead(self):
+        return self.nof_results() > 2 and not self.m_of_n_hits(m=2)
+
     @classmethod
     def new_from_hit(cls, self, z, measmodel, hit_llhood, inv_S):
         hist = self._hit_history.copy()
@@ -135,14 +141,12 @@ class Track(object):
 
     def dead_local_hyps(self):
         return [
-            lid for lid, lhyp in self._lhyps.items() 
-            if lhyp.nof_results() > 2 and not lhyp.m_of_n_hits(m=2)
+            lid for lid, lhyp in self._lhyps.items() if lhyp.is_dead()
         ]
 
     def confirmed_local_hyps(self):
         return [
-            lid for lid, lhyp in self._lhyps.items() 
-            if lhyp.nof_results() > 2 and lhyp.m_of_n_hits(m=2)
+            lid for lid, lhyp in self._lhyps.items() if lhyp.is_confirmed()
         ]
 
     def terminate(self, lhyp_ids):
