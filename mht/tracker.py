@@ -371,30 +371,29 @@ class Tracker(object):
         for track in self.tracks.values():
             track.predict(motionmodel)
 
+    def calculate_weights(self, global_hypotheses):
+        weights_updated = [
+            sum([self.tracks[trid].log_likelihood(lid) for trid, lid in ghyp.items()])
+            for ghyp in global_hypotheses
+        ]
+        gweights, _ = _normalize_log_sum(array(weights_updated))
+        return gweights
+
     def terminate_tracks(self):
         terminate_lids = {trid: track.dead_local_hyps() for trid, track in self.tracks.items()}
 
-        ghyps_updated = list()
-        gweights_updated = list()
-        for w, ghyp in zip(self.gweights, self.ghyps):
-            ghyp_pruned = {
-                trid: lid 
-                for trid, lid in ghyp.items() if lid not in terminate_lids[trid]
-            }
-            llhood_pruned = [
-                self.tracks[trid].log_likelihood(lid)
-                for trid, lid in ghyp.items() if lid in terminate_lids[trid]
-            ]
+        ghyps_with_alive = [
+            {trid: lid for trid, lid in ghyp.items() if lid not in terminate_lids[trid]}
+            for ghyp in self.ghyps
+        ]
 
-            if ghyp_pruned:
-                ghyps_updated.append(ghyp_pruned)
-                gweights_updated.append(w - sum(llhood_pruned))
+        ghyps_with_alive = [ghyp for ghyp in ghyps_with_alive if ghyp]
 
         for trid, track in self.tracks.items():
             track.terminate(terminate_lids[trid])
 
-        self.gweights, _ = _normalize_log_sum(array(gweights_updated))
-        self.ghyps = ghyps_updated
+        self.ghyps = ghyps_with_alive
+        self.gweights = self.calculate_weights(ghyps_with_alive)
 
         assert(len(self.ghyps) == len(self.gweights))
 
