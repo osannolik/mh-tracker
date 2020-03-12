@@ -416,11 +416,9 @@ class Tracker(object):
         self.terminate_tracks()
 
     def process(self, detections, volume, gating_size2, measmodel, motionmodel):
-        self.update(detections, volume, gating_size2, measmodel)
-        est = self.estimates()
         self.predict(motionmodel)
-
-        return est
+        self.update(detections, volume, gating_size2, measmodel)
+        return self.estimates()
 
     def debug_print(self, t):
         pass
