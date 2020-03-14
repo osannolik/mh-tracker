@@ -1,5 +1,6 @@
 from numpy import (arctan2, degrees, pi, log, exp, sqrt, dot, array, newaxis, zeros, float64, int, array_equal)
 from numpy.linalg import (inv, eigh, det)
+from numpy.random import (multivariate_normal)
 
 def mahalanobis2(x, mu, inv_sigma):
     d = x-mu
@@ -112,6 +113,9 @@ class Density(object):
             self.predict(motion).update(zi, measure)
 
         return self
+
+    def sample(self):
+        return multivariate_normal(self.x, self.P)
 
 class Mixture(object):
 
