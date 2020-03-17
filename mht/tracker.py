@@ -283,6 +283,11 @@ class Tracker(object):
 
         return new_ghyp, total_init_cost
 
+    def _unnormalized_weight(self, ghyp):
+        return sum([
+            self.tracks[trid].log_likelihood(lid) for trid, lid in ghyp.items()
+        ])
+
     def update_global_hypotheses(self, track_updates, Z, measmodel, volume, M, weight_threshold):
         new_weights = list()
         new_ghyps = list()
@@ -296,9 +301,8 @@ class Tracker(object):
 
                 nof_best = ceil(exp(weight) * M)
 
-                for sum_cost, assignment, unassigned_detections in cost_matrix.solutions(nof_best):
+                for _, assignment, unassigned_detections in cost_matrix.solutions(nof_best):
                     new_ghyp = dict()
-                    new_weight = -sum_cost # gain = -sum_cost
                     for trid, lid in ghyp.items():
                         if trid in assignment.keys():
                             lhyps_from_gates = track_updates[trid][lid]
@@ -309,27 +313,31 @@ class Tracker(object):
                         else:
                             # not part of assignment problem, keep the old
                             new_ghyp[trid] = lid
-                            new_weight += self.tracks[trid].log_likelihood(lid)
 
-                    init_ghyp, total_init_cost = \
+                    init_ghyp, _ = \
                         self.create_track_trees(Z[unassigned_detections], volume, measmodel)
 
                     new_ghyp.update(init_ghyp)
 
+                    weight_delta = self._unnormalized_weight(new_ghyp)
+
+                    new_weights.append(weight + weight_delta)
                     new_ghyps.append(new_ghyp)
-                    new_weights.append(new_weight - total_init_cost)
 
         else:
-            init_ghyp, total_init_cost = self.create_track_trees(Z, volume, measmodel)
+            init_ghyp, _ = self.create_track_trees(Z, volume, measmodel)
 
+            new_weights = [self._unnormalized_weight(init_ghyp)]
             new_ghyps = [init_ghyp]
-            new_weights = [-total_init_cost]
 
         assert(len(new_ghyps)==len(new_weights))
 
-        new_weights, _ = _normalize_log_sum(array(new_weights))
+        new_weights, new_ghyps = self.prune_dead(array(new_weights), array(new_ghyps))
+        new_weights, _ = _normalize_log_sum(new_weights)
 
-        new_weights, new_ghyps = self.hypothesis_prune(new_weights, array(new_ghyps), weight_threshold)
+        assert(len(new_ghyps)==len(new_weights))
+
+        new_weights, new_ghyps = self.hypothesis_prune(new_weights, new_ghyps, weight_threshold)
         new_weights, _ = _normalize_log_sum(new_weights)
 
         new_weights, new_ghyps = self.hypothesis_cap(new_weights, new_ghyps, M)
@@ -345,6 +353,28 @@ class Tracker(object):
 
         self.gweights = new_weights
         self.ghyps = new_ghyps
+
+    def prune_dead(self, weights, global_hypotheses):
+        dead_lhyps = {trid: track.dead_local_hyps() for trid, track in self.tracks.items()}
+
+        pruned_weights = list()
+        pruned_ghyps = list()
+        for weight, ghyp in zip(weights, global_hypotheses):
+            w_diff = 0.0
+            pruned_ghyp = dict()
+            for trid, lid in ghyp.items():
+                if lid in dead_lhyps[trid]:
+                    w_diff += self.tracks[trid].log_likelihood(lid)
+                else:
+                    pruned_ghyp[trid] = lid
+
+            if pruned_ghyp:
+                pruned_weights.append(weight - w_diff)
+                pruned_ghyps.append(pruned_ghyp)
+
+        assert(len(pruned_weights)==len(pruned_ghyps))
+
+        return array(pruned_weights), array(pruned_ghyps)
 
     @staticmethod
     def hypothesis_prune(weights, hypotheses, threshold):
@@ -384,23 +414,6 @@ class Tracker(object):
         return gweights
 
     def terminate_tracks(self):
-        terminate_lids = {trid: track.dead_local_hyps() for trid, track in self.tracks.items()}
-
-        ghyps_with_alive = [
-            {trid: lid for trid, lid in ghyp.items() if lid not in terminate_lids[trid]}
-            for ghyp in self.ghyps
-        ]
-
-        ghyps_with_alive = [ghyp for ghyp in ghyps_with_alive if ghyp]
-
-        for trid, track in self.tracks.items():
-            track.terminate(terminate_lids[trid])
-
-        self.ghyps = ghyps_with_alive
-        self.gweights = self.calculate_weights(ghyps_with_alive)
-
-        assert(len(self.ghyps) == len(self.gweights))
-
         trids_in_ghyps = set([trid for ghyp in self.ghyps for trid in ghyp.keys()])
         unused_tracks = set(self.tracks.keys()) - trids_in_ghyps
         for trid in unused_tracks:
