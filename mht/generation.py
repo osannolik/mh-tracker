@@ -1,7 +1,7 @@
 import numpy as np
 from numpy.random import (multivariate_normal, uniform, poisson)
 
-def ground_truth(t_length, x_birth, t_birth, t_death, motionmodel):
+def ground_truth(t_length, x_birth, t_birth, t_death, motionmodel, dt=1.0):
     """
     returns a list of length t_length with dictionaries containing object states. 
     """
@@ -14,7 +14,7 @@ def ground_truth(t_length, x_birth, t_birth, t_death, motionmodel):
     for i, state in enumerate(x_birth):
         trajs[t_births[i]][i] = state
         for t in range(t_births[i] + 1, t_deaths[i] + 1):
-            trajs[t][i] = multivariate_normal(motionmodel.f(trajs[t-1][i]), motionmodel.Q())
+            trajs[t][i] = multivariate_normal(motionmodel.f(trajs[t-1][i], dt), motionmodel.Q(dt))
 
     return trajs
 
@@ -36,7 +36,7 @@ def measurements(ground_truth, measmodel, P_D, lambda_c, range_c):
 
     return meas
 
-def random_ground_truth(t_length, init_state_density, init_lambda, P_survival, motionmodel):
+def random_ground_truth(t_length, init_state_density, init_lambda, P_survival, motionmodel, dt):
     """
     Generate a set of ground truth objects. 
     Object birth is modelled as a Poisson process with init_lambda as the expected number of
@@ -65,4 +65,4 @@ def random_ground_truth(t_length, init_state_density, init_lambda, P_survival, m
     assert(len(x_birth)==len(t_birth)==len(t_death))
     assert((np.array(t_birth) < np.array(t_death)).all())
 
-    return ground_truth(t_length, x_birth, t_birth, t_death, motionmodel)
+    return ground_truth(t_length, x_birth, t_birth, t_death, motionmodel, dt)

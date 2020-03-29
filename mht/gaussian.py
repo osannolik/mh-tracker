@@ -13,10 +13,10 @@ def moment_matching(log_w, densities):
     P_weighted = sum([w[i] * (d.P + spread(d.x, x_weighted)) for i,d in enumerate(densities)])
     return Density(x_weighted, P_weighted)
 
-def kalman_predict(density, motion):
-    F = motion.F(density.x)
-    x = motion.f(density.x)
-    P = F @ density.P @ F.T + motion.Q()
+def kalman_predict(density, motion, dt):
+    F = motion.F(density.x, dt)
+    x = motion.f(density.x, dt)
+    P = F @ density.P @ F.T + motion.Q(dt)
     return Density(x=x, P=P)
 
 def kalman_update(density, z, inv_S, measure):
@@ -95,8 +95,8 @@ class Density(object):
 #        else:
 #            return (array([]), array([]))
 
-    def predict(self, motion):
-        predicted = kalman_predict(self, motion)
+    def predict(self, motion, dt):
+        predicted = kalman_predict(self, motion, dt)
         self.x, self.P = predicted.x, predicted.P
         return self
 
@@ -108,9 +108,9 @@ class Density(object):
         self.x, self.P = updated.x, updated.P
         return self
 
-    def kalman_step(self, z, motion, measure):
+    def kalman_step(self, z, dt, motion, measure):
         for zi in array(z):
-            self.predict(motion).update(zi, measure)
+            self.predict(motion, dt).update(zi, measure)
 
         return self
 
