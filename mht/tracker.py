@@ -27,8 +27,10 @@ def _normalize_log_sum(items):
 
 class LocalHypothesis(object):
 
-    def __init__(self, state, LLR, log_likelihood, LLR_max=None, hit_history=None):
+    def __init__(self, state, LLR, log_likelihood, t_now, t_hit=None, LLR_max=None, hit_history=None):
         self._state = Density(x=state.x, P=state.P)
+        self._time = t_now
+        self._time_hit = t_hit
         self._llr = LLR
         self._llr_max = LLR if LLR_max is None else LLR_max
         self._llhood = log_likelihood
@@ -42,8 +44,9 @@ class LocalHypothesis(object):
     def density(self):
         return Density(x=self._state.x, P=self._state.P)
 
-    def predict(self, motionmodel):
-        self._state.predict(motionmodel)
+    def predict(self, motionmodel, t_now):
+        self._state.predict(motionmodel, dt=t_now-self._time)
+        self._time = t_now
 
     def log_likelihood_ratio(self):
         return self._llr
@@ -63,11 +66,12 @@ class LocalHypothesis(object):
     def is_confirmed(self):
         return self.nof_results() > 2 and self.m_of_n_hits(m=2)
 
-    def is_dead(self):
-        return self.nof_results() > 2 and not self.m_of_n_hits(m=2)
+    def is_dead(self, max_coast_time):
+        timeout = False if self._time_hit is None else (self._time-self._time_hit) > max_coast_time
+        return timeout or (self.nof_results() > 2 and not self.m_of_n_hits(m=2))
 
     @classmethod
-    def new_from_hit(cls, self, z, measmodel, hit_llhood, inv_S):
+    def new_from_hit(cls, self, z, measmodel, hit_llhood, t_hit, inv_S):
         hist = self._hit_history.copy()
         hist.append(True)
         llr = self._llr + hit_llhood
@@ -75,6 +79,8 @@ class LocalHypothesis(object):
             state = self.density().update(z, measmodel, inv_S),
             LLR = llr,
             log_likelihood = hit_llhood,
+            t_now = self._time,
+            t_hit = t_hit,
             LLR_max = max(self._llr_max, llr),
             hit_history = hist
         )
@@ -88,6 +94,8 @@ class LocalHypothesis(object):
             state = self.density(),
             LLR = self._llr + miss_llhood,
             log_likelihood = miss_llhood,
+            t_now = self._time,
+            t_hit = self._time_hit,
             LLR_max = max(self._llr_max, llr),
             hit_history = hist
         )
@@ -136,12 +144,18 @@ class Track(object):
         else:
             return self._lhyps[lhyp_id].log_likelihood_ratio()
 
+    def log_likelihood_ratio_max(self, lhyp_id=None):
+        if lhyp_id is None:
+            return [lhyp._llr_max for lhyp in self._lhyps.values()]
+        else:
+            return self._lhyps[lhyp_id]._llr_max
+
     def log_likelihood(self, lhyp_id):
         return self._lhyps[lhyp_id].log_likelihood()
 
-    def dead_local_hyps(self):
+    def dead_local_hyps(self, max_coast_time):
         return [
-            lid for lid, lhyp in self._lhyps.items() if lhyp.is_dead()
+            lid for lid, lhyp in self._lhyps.items() if lhyp.is_dead(max_coast_time)
         ]
 
     def confirmed_local_hyps(self):
@@ -161,11 +175,11 @@ class Track(object):
             if lid in lhyp_ids
         }
 
-    def predict(self, motionmodel):
+    def predict(self, motionmodel, t_now):
         for lhyp in self._lhyps.values():
-            lhyp.predict(motionmodel)
+            lhyp.predict(motionmodel, t_now)
 
-    def update(self, Z, gating_size2, volume, measmodel):
+    def update(self, Z, gating_size2, volume, measmodel, t_now):
         new_lhyps = dict()
 
         for lid, lhyp in self._lhyps.items():
@@ -177,7 +191,7 @@ class Track(object):
             lhood = np.full(len(Z), LOG_0)
             lhood[in_gate_indices] = lh + log(volume.P_D()+EPS) - log(volume.clutter_intensity()+EPS)
             new_lhyps[lid] = OrderedDict([
-                (j, LocalHypothesis.new_from_hit(lhyp, Z[j], measmodel, lhood[j], inv_S)
+                (j, LocalHypothesis.new_from_hit(lhyp, Z[j], measmodel, lhood[j], t_now, inv_S)
                     if j in in_gate_indices else
                     None)
                 for j in range(len(Z))
@@ -245,15 +259,18 @@ class CostMatrix(object):
 
 class Tracker(object):
 
-    def __init__(self, max_nof_hyps, hyp_weight_threshold, states=[]):
+    def __init__(self, max_nof_hyps, hyp_weight_threshold, max_coast_time, states=[], t_now=None):
+        assert(len(states)==0 or (len(states)>0 and (t_now is not None)),
+            "provide t_now if initialized with known states")
         self._M = max_nof_hyps
         self._weight_threshold = hyp_weight_threshold
+        self._max_coast_time = max_coast_time
         
         self.tracks = dict()
 
         ghyp = dict()
         for state in states:
-            local_hypothesis = LocalHypothesis(Density(state.x, state.P), 0.0, 0.0)
+            local_hypothesis = LocalHypothesis(Density(state.x, state.P), 0.0, 0.0, t_now)
             track = Track(local_hypothesis)
             self.tracks[track.id()] = track
             ghyp[track.id()] = local_hypothesis.id()
@@ -261,7 +278,7 @@ class Tracker(object):
         self.ghyps = [ghyp]
         self.gweights = array([log(1.0)])
 
-    def create_track_trees(self, detections, volume, measmodel):
+    def create_track_trees(self, detections, volume, measmodel, t_now):
         intensity_c = volume.clutter_intensity()
         intensity_new = volume.initiation_intensity()
         llr0 = log(intensity_new+EPS) - log(intensity_c+EPS)
@@ -272,7 +289,7 @@ class Tracker(object):
             R = measmodel.R()
             P0 = np.diag([R[0,0], R[1,1], 1.0, 1.0])
             llhood = log(volume.P_D()+EPS) - log(intensity_c+EPS)
-            new_lhyp = LocalHypothesis(Density(x0, P0), llr0, llhood)
+            new_lhyp = LocalHypothesis(Density(x0, P0), llr0, llhood, t_now)
             new_track = Track(new_lhyp)
 
             self.tracks[new_track.id()] = new_track
@@ -288,7 +305,7 @@ class Tracker(object):
             self.tracks[trid].log_likelihood(lid) for trid, lid in ghyp.items()
         ])
 
-    def update_global_hypotheses(self, track_updates, Z, measmodel, volume, M, weight_threshold):
+    def update_global_hypotheses(self, track_updates, Z, measmodel, volume, M, weight_threshold, t_now):
         new_weights = list()
         new_ghyps = list()
 
@@ -315,7 +332,7 @@ class Tracker(object):
                             new_ghyp[trid] = lid
 
                     init_ghyp, _ = \
-                        self.create_track_trees(Z[unassigned_detections], volume, measmodel)
+                        self.create_track_trees(Z[unassigned_detections], volume, measmodel, t_now)
 
                     new_ghyp.update(init_ghyp)
 
@@ -325,7 +342,7 @@ class Tracker(object):
                     new_ghyps.append(new_ghyp)
 
         else:
-            init_ghyp, _ = self.create_track_trees(Z, volume, measmodel)
+            init_ghyp, _ = self.create_track_trees(Z, volume, measmodel, t_now)
 
             new_weights = [self._unnormalized_weight(init_ghyp)]
             new_ghyps = [init_ghyp]
@@ -355,7 +372,7 @@ class Tracker(object):
         self.ghyps = new_ghyps
 
     def prune_dead(self, weights, global_hypotheses):
-        dead_lhyps = {trid: track.dead_local_hyps() for trid, track in self.tracks.items()}
+        dead_lhyps = {trid: track.dead_local_hyps(self._max_coast_time) for trid, track in self.tracks.items()}
 
         pruned_weights = list()
         pruned_ghyps = list()
@@ -401,9 +418,9 @@ class Tracker(object):
         else:
             return {}
 
-    def predict(self, motionmodel):
+    def predict(self, motionmodel, t_now):
         for track in self.tracks.values():
-            track.predict(motionmodel)
+            track.predict(motionmodel, t_now)
 
     def calculate_weights(self, global_hypotheses):
         weights_updated = [
@@ -419,31 +436,36 @@ class Tracker(object):
         for trid in unused_tracks:
             del self.tracks[trid]
 
-    def update(self, detections, volume, gating_size2, measmodel):
+    def update(self, detections, volume, gating_size2, measmodel, t_now):
         Z = array(detections)
 
         track_updates = OrderedDict([
-            (trid, track.update(Z, gating_size2, volume, measmodel))
+            (trid, track.update(Z, gating_size2, volume, measmodel, t_now))
             for trid, track in self.tracks.items() if track.is_within(volume, measmodel)
         ])
 
-        self.update_global_hypotheses(track_updates, Z, measmodel, volume, self._M, self._weight_threshold)
+        self.update_global_hypotheses(track_updates, Z, measmodel, volume, self._M, self._weight_threshold, t_now)
 
         self.terminate_tracks()
 
-    def process(self, detections, volume, gating_size2, measmodel, motionmodel):
-        self.predict(motionmodel)
-        self.update(detections, volume, gating_size2, measmodel)
+    def process(self, detections, volume, gating_size2, measmodel, motionmodel, t_now):
+        self.predict(motionmodel, t_now)
+        self.update(detections, volume, gating_size2, measmodel, t_now)
         return self.estimates()
 
     def debug_print(self, t):
         pass
-        #print("[t = {}]".format(t))
+        print("[t = {}]".format(t))
         #print(len(self.gweights))
-        #print("    Weights =")
-        #print(self.gweights)
+        #print("Weights =")
+        print(self.gweights)
+        print(self.ghyps)
 
-        #for trid in self.estimates().keys():
-        #    print("    Track {} LLR = {}".format(trid, self.tracks[trid].log_likelihood_ratio()))
+        for trid in self.estimates().keys():
+            print("    Track {} LLR = {} ({})".format(
+               self.tracks[trid], 
+               self.tracks[trid].log_likelihood_ratio(), 
+               self.tracks[trid].log_likelihood_ratio_max()
+            ))
 
-        #print("")
+        print("")
