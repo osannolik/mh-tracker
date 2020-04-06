@@ -22,6 +22,7 @@ def measurements(ground_truth, measmodel, P_D, lambda_c, range_c):
     """
     range_c is [[x0_min, x0_max], [x1_min, x1_max], ...]
     """
+    assert(len(range_c)==measmodel.dimension())
     meas = list(list() for _ in range(len(ground_truth)))
 
     for t, objects in enumerate(ground_truth):
