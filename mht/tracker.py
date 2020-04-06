@@ -259,23 +259,12 @@ class CostMatrix(object):
 
 class Tracker(object):
 
-    def __init__(self, max_nof_hyps, hyp_weight_threshold, max_coast_time, states=[], t_now=None):
-        assert(len(states)==0 or (len(states)>0 and (t_now is not None)),
-            "provide t_now if initialized with known states")
+    def __init__(self, max_nof_hyps, hyp_weight_threshold, max_coast_time):
         self._M = max_nof_hyps
         self._weight_threshold = hyp_weight_threshold
         self._max_coast_time = max_coast_time
-        
         self.tracks = dict()
-
-        ghyp = dict()
-        for state in states:
-            local_hypothesis = LocalHypothesis(Density(state.x, state.P), 0.0, 0.0, t_now)
-            track = Track(local_hypothesis)
-            self.tracks[track.id()] = track
-            ghyp[track.id()] = local_hypothesis.id()
-
-        self.ghyps = [ghyp]
+        self.ghyps = [dict()]
         self.gweights = array([log(1.0)])
 
     def create_track_trees(self, detections, volume, measmodel, t_now):
