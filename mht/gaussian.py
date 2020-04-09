@@ -95,6 +95,11 @@ class Density(object):
 #        else:
 #            return (array([]), array([]))
 
+    def predicted_likelihood(self, z, measure, S=None):
+        zbar = measure.h(self.x)
+        d = Density(x=zbar, P=innovation(self, measure) if S is None else S)
+        return d.ln_mvnpdf(z)
+
     def predict(self, motion, dt):
         predicted = kalman_predict(self, motion, dt)
         self.x, self.P = predicted.x, predicted.P

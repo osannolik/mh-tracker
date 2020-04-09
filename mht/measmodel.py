@@ -2,7 +2,7 @@ from numpy import (array, dot, sqrt, diag, arctan2)
 
 class ConstantVelocity(object):
 
-    def __init__(self, sigma):
+    def __init__(self, sigma=1.0):
         self.sigma = sigma
         self.__R = diag(2*[sigma**2])
 
@@ -23,6 +23,9 @@ class ConstantVelocity(object):
     def inv_h(self, z):
         # (A.T @ np.linalg.inv(A @ A.T)) @ z
         return array([z[0], z[1], 0.0, 0.0])
+
+    def P0(self):
+        return diag([self.__R[0,0], self.__R[1,1], 1.0, 1.0])
 
 class CoordinatedTurn(object):
 

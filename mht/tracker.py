@@ -1,10 +1,9 @@
 from collections import (deque, OrderedDict)
+from copy import (deepcopy)
 
 import numpy as np
 from numpy import (array, argsort, ceil, exp, eye, ones, log, vstack, hstack, int)
 from numpy.linalg import (inv)
-from .gaussian import (predicted_likelihood, innovation)
-from .gaussian import (Density)
 
 from murty import Murty
 
@@ -27,26 +26,25 @@ def _normalize_log_sum(items):
 
 class LocalHypothesis(object):
 
-    def __init__(self, state, LLR, log_likelihood, t_now, t_hit=None, LLR_max=None, hit_history=None):
-        self._state = Density(x=state.x, P=state.P)
-        self._time = t_now
-        self._time_hit = t_hit
+    def __init__(self, target, LLR, log_likelihood, LLR_max=None):
+        self._target = target
         self._llr = LLR
         self._llr_max = LLR if LLR_max is None else LLR_max
         self._llhood = log_likelihood
-        self._hit_history = deque(maxlen=5) if hit_history is None else hit_history
         self._lid = self.__class__._counter
         self.__class__._counter += 1
 
     def id(self):
         return self._lid
 
-    def density(self):
-        return Density(x=self._state.x, P=self._state.P)
+    def target(self):
+        return deepcopy(self._target)
 
-    def predict(self, motionmodel, t_now):
-        self._state.predict(motionmodel, dt=t_now-self._time)
-        self._time = t_now
+    def density(self):
+        return deepcopy(self._target.density())
+
+    def predict(self, t_now):
+        self._target.predict(t_now)
 
     def log_likelihood_ratio(self):
         return self._llr
@@ -54,54 +52,38 @@ class LocalHypothesis(object):
     def log_likelihood(self):
         return self._llhood
 
-    def is_hit(self):
-        return self._hit_history[-1]
-
-    def nof_results(self):
-        return len(self._hit_history)
-
-    def m_of_n_hits(self, m):
-        return self._hit_history.count(True) >= m
+    def is_dead(self):
+        return self._target.is_dead()
 
     def is_confirmed(self):
-        return self.nof_results() > 2 and self.m_of_n_hits(m=2)
-
-    def is_dead(self, max_coast_time):
-        timeout = False if self._time_hit is None else (self._time-self._time_hit) > max_coast_time
-        return timeout or (self.nof_results() > 2 and not self.m_of_n_hits(m=2))
+        return self._target.is_confirmed()
 
     @classmethod
-    def new_from_hit(cls, self, z, measmodel, hit_llhood, t_hit, inv_S):
-        hist = self._hit_history.copy()
-        hist.append(True)
+    def new_from_hit(cls, self, z, hit_llhood, t_hit):
+        target = deepcopy(self._target)
+        target.update_hit(z, t_hit)
         llr = self._llr + hit_llhood
         return cls(
-            state = self.density().update(z, measmodel, inv_S),
+            target = target,
             LLR = llr,
             log_likelihood = hit_llhood,
-            t_now = self._time,
-            t_hit = t_hit,
             LLR_max = max(self._llr_max, llr),
-            hit_history = hist
         )
 
     @classmethod
-    def new_from_miss(cls, self, miss_llhood):
-        hist = self._hit_history.copy()
-        hist.append(False)
+    def new_from_miss(cls, self, miss_llhood, t_now):
+        target = deepcopy(self._target)
+        target.update_miss(t_now)
         llr = self._llr + miss_llhood
         return cls(
-            state = self.density(),
+            target = target,
             LLR = self._llr + miss_llhood,
             log_likelihood = miss_llhood,
-            t_now = self._time,
-            t_hit = self._time_hit,
-            LLR_max = max(self._llr_max, llr),
-            hit_history = hist
+            LLR_max = max(self._llr_max, llr)
         )
 
     def __repr__(self):
-        return "<loc_hyp {0}: {1}>".format(self.id(), self._state)
+        return "<loc_hyp {0}: {1}>".format(self.id(), self.density())
 
 LocalHypothesis._counter = 0
 
@@ -133,10 +115,9 @@ class Track(object):
         else:
             return self._lhyps[lhyp_id].density()
 
-    def is_within(self, volume, measmodel):
+    def is_within(self, volume):
         # Margin using covariance?
-        zbar = [measmodel.h(density.x) for density in self.estimate()]
-        return array([volume.is_within(z) for z in zbar]).any()
+        return array([lhyp.target().is_within(volume) for lhyp in self._lhyps.values()]).any()
 
     def log_likelihood_ratio(self, lhyp_id=None):
         if lhyp_id is None:
@@ -153,15 +134,11 @@ class Track(object):
     def log_likelihood(self, lhyp_id):
         return self._lhyps[lhyp_id].log_likelihood()
 
-    def dead_local_hyps(self, max_coast_time):
-        return [
-            lid for lid, lhyp in self._lhyps.items() if lhyp.is_dead(max_coast_time)
-        ]
+    def dead_local_hyps(self):
+        return [lid for lid, lhyp in self._lhyps.items() if lhyp.is_dead()]
 
     def confirmed_local_hyps(self):
-        return [
-            lid for lid, lhyp in self._lhyps.items() if lhyp.is_confirmed()
-        ]
+        return [lid for lid, lhyp in self._lhyps.items() if lhyp.is_confirmed()]
 
     def terminate(self, lhyp_ids):
         self._lhyps = {
@@ -175,29 +152,27 @@ class Track(object):
             if lid in lhyp_ids
         }
 
-    def predict(self, motionmodel, t_now):
+    def predict(self, t_now):
         for lhyp in self._lhyps.values():
-            lhyp.predict(motionmodel, t_now)
+            lhyp.predict(t_now)
 
-    def update(self, Z, gating_size2, volume, measmodel, t_now):
+    def update(self, Z, volume, t_now):
         new_lhyps = dict()
 
         for lid, lhyp in self._lhyps.items():
-            state = lhyp.density()
-            S = innovation(state, measmodel)
-            inv_S = inv(S)
-            (z_in_gate, in_gate_indices) = state.gating(Z, measmodel, gating_size2, inv_S)
-            lh = array([predicted_likelihood(state, z, S, measmodel) for z in z_in_gate])
+            target = lhyp.target()
+            (z_in_gate, in_gate_indices) = target.gating(Z)
+            lh = array([target.predicted_likelihood(z) for z in z_in_gate])
             lhood = np.full(len(Z), LOG_0)
             lhood[in_gate_indices] = lh + log(volume.P_D()+EPS) - log(volume.clutter_intensity()+EPS)
             new_lhyps[lid] = OrderedDict([
-                (j, LocalHypothesis.new_from_hit(lhyp, Z[j], measmodel, lhood[j], t_now, inv_S)
+                (j, LocalHypothesis.new_from_hit(lhyp, Z[j], lhood[j], t_now)
                     if j in in_gate_indices else
                     None)
                 for j in range(len(Z))
             ])
             P_G = 1.0
-            new_lhyps[lid][MISS] = LocalHypothesis.new_from_miss(lhyp, log(1.0 - volume.P_D()*P_G + EPS))
+            new_lhyps[lid][MISS] = LocalHypothesis.new_from_miss(lhyp, log(1.0 - volume.P_D()*P_G + EPS), t_now)
 
         return new_lhyps
 
@@ -207,6 +182,10 @@ class CostMatrix(object):
 
     def __init__(self, global_hypothesis, track_updates):
         self._included_trids = [trid for trid in track_updates.keys() if trid in global_hypothesis.keys()]
+
+        if len(self._included_trids)==0:
+            self._matrix = np.empty(shape=(0,0))
+            return
 
         new_lhyps = lambda trid: track_updates[trid][global_hypothesis[trid]]
 
@@ -228,7 +207,13 @@ class CostMatrix(object):
 
         self._matrix = -1.0 * hstack((c_track_detection, c_miss))
 
+    def tracks(self):
+        return self._included_trids[:]
+
     def solutions(self, max_nof_solutions):
+        if not self._matrix.size:
+            return None
+
         murty_solver = Murty(self._matrix)
 
         # Get back trid and detection nr from matrix indices
@@ -259,26 +244,23 @@ class CostMatrix(object):
 
 class Tracker(object):
 
-    def __init__(self, max_nof_hyps, hyp_weight_threshold, max_coast_time):
+    def __init__(self, max_nof_hyps, hyp_weight_threshold):
         self._M = max_nof_hyps
         self._weight_threshold = hyp_weight_threshold
-        self._max_coast_time = max_coast_time
         self.tracks = dict()
         self.ghyps = [dict()]
         self.gweights = array([log(1.0)])
 
-    def create_track_trees(self, detections, volume, measmodel, t_now):
+    def create_track_trees(self, detections, volume, targetmodel, t_now):
         intensity_c = volume.clutter_intensity()
         intensity_new = volume.initiation_intensity()
         llr0 = log(intensity_new+EPS) - log(intensity_c+EPS)
 
         new_ghyp = dict()
         for z in detections:
-            x0 = measmodel.inv_h(z)
-            R = measmodel.R()
-            P0 = np.diag([R[0,0], R[1,1], 1.0, 1.0])
             llhood = log(volume.P_D()+EPS) - log(intensity_c+EPS)
-            new_lhyp = LocalHypothesis(Density(x0, P0), llr0, llhood, t_now)
+            target = targetmodel.from_one_detection(z, t_now)
+            new_lhyp = LocalHypothesis(target, llr0, llhood, t_now)
             new_track = Track(new_lhyp)
 
             self.tracks[new_track.id()] = new_track
@@ -290,11 +272,9 @@ class Tracker(object):
         return new_ghyp, total_init_cost
 
     def _unnormalized_weight(self, ghyp):
-        return sum([
-            self.tracks[trid].log_likelihood(lid) for trid, lid in ghyp.items()
-        ])
+        return sum([self.tracks[trid].log_likelihood(lid) for trid, lid in ghyp.items()])
 
-    def update_global_hypotheses(self, track_updates, Z, measmodel, volume, M, weight_threshold, t_now):
+    def update_global_hypotheses(self, track_updates, Z, targetmodel, volume, M, weight_threshold, t_now):
         new_weights = list()
         new_ghyps = list()
 
@@ -305,33 +285,38 @@ class Tracker(object):
             for ghyp, weight in zip(self.ghyps, self.gweights):
                 cost_matrix = CostMatrix(ghyp, track_updates)
 
-                nof_best = ceil(exp(weight) * M)
+                if cost_matrix.tracks():
+                    nof_best = ceil(exp(weight) * M)
 
-                for _, assignment, unassigned_detections in cost_matrix.solutions(nof_best):
-                    new_ghyp = dict()
-                    for trid, lid in ghyp.items():
-                        if trid in assignment.keys():
-                            lhyps_from_gates = track_updates[trid][lid]
-                            detection = assignment[trid]
-                            lhyp = lhyps_from_gates[detection]
-                            new_ghyp[trid] = lhyp.id()
-                            self.tracks[trid].add(lhyp)
-                        else:
-                            # not part of assignment problem, keep the old
-                            new_ghyp[trid] = lid
+                    for _, assignment, unassigned_detections in cost_matrix.solutions(nof_best):
+                        new_ghyp = dict()
+                        for trid, lid in ghyp.items():
+                            if trid in assignment.keys():
+                                lhyps_from_gates = track_updates[trid][lid]
+                                detection = assignment[trid]
+                                lhyp = lhyps_from_gates[detection]
+                                new_ghyp[trid] = lhyp.id()
+                                self.tracks[trid].add(lhyp)
+                            else:
+                                # Not part of assignment problem, keep the old
+                                new_ghyp[trid] = lid
 
-                    init_ghyp, _ = \
-                        self.create_track_trees(Z[unassigned_detections], volume, measmodel, t_now)
+                        init_ghyp, _ = \
+                            self.create_track_trees(Z[unassigned_detections], volume, targetmodel, t_now)
 
-                    new_ghyp.update(init_ghyp)
+                        new_ghyp.update(init_ghyp)
 
-                    weight_delta = self._unnormalized_weight(new_ghyp)
+                        weight_delta = self._unnormalized_weight(new_ghyp)
 
-                    new_weights.append(weight + weight_delta)
-                    new_ghyps.append(new_ghyp)
+                        new_weights.append(weight + weight_delta)
+                        new_ghyps.append(new_ghyp)
+                else:
+                    # No track in hyp is included in assignment problem, keep the old
+                    new_weights.append(weight)
+                    new_ghyps.append(ghyp)
 
         else:
-            init_ghyp, _ = self.create_track_trees(Z, volume, measmodel, t_now)
+            init_ghyp, _ = self.create_track_trees(Z, volume, targetmodel, t_now)
 
             new_weights = [self._unnormalized_weight(init_ghyp)]
             new_ghyps = [init_ghyp]
@@ -361,7 +346,7 @@ class Tracker(object):
         self.ghyps = new_ghyps
 
     def prune_dead(self, weights, global_hypotheses):
-        dead_lhyps = {trid: track.dead_local_hyps(self._max_coast_time) for trid, track in self.tracks.items()}
+        dead_lhyps = {trid: track.dead_local_hyps() for trid, track in self.tracks.items()}
 
         pruned_weights = list()
         pruned_ghyps = list()
@@ -407,9 +392,9 @@ class Tracker(object):
         else:
             return {}
 
-    def predict(self, motionmodel, t_now):
+    def predict(self, t_now):
         for track in self.tracks.values():
-            track.predict(motionmodel, t_now)
+            track.predict(t_now)
 
     def calculate_weights(self, global_hypotheses):
         weights_updated = [
@@ -425,21 +410,21 @@ class Tracker(object):
         for trid in unused_tracks:
             del self.tracks[trid]
 
-    def update(self, detections, volume, gating_size2, measmodel, t_now):
+    def update(self, detections, volume, targetmodel, t_now):
         Z = array(detections)
 
         track_updates = OrderedDict([
-            (trid, track.update(Z, gating_size2, volume, measmodel, t_now))
-            for trid, track in self.tracks.items() if track.is_within(volume, measmodel)
+            (trid, track.update(Z, volume, t_now))
+            for trid, track in self.tracks.items() if track.is_within(volume)
         ])
 
-        self.update_global_hypotheses(track_updates, Z, measmodel, volume, self._M, self._weight_threshold, t_now)
+        self.update_global_hypotheses(track_updates, Z, targetmodel, volume, self._M, self._weight_threshold, t_now)
 
         self.terminate_tracks()
 
-    def process(self, detections, volume, gating_size2, measmodel, motionmodel, t_now):
-        self.predict(motionmodel, t_now)
-        self.update(detections, volume, gating_size2, measmodel, t_now)
+    def process(self, detections, volume, targetmodel, t_now):
+        self.predict(t_now)
+        self.update(detections, volume, targetmodel, t_now)
         return self.estimates()
 
     def debug_print(self, t):
