@@ -2,14 +2,12 @@ from collections import (deque, OrderedDict)
 from copy import (deepcopy)
 
 import numpy as np
-from numpy import (array, argsort, ceil, exp, eye, ones, log, vstack, hstack, int)
-from numpy.linalg import (inv)
 
 from murty import Murty
 
 EPS = np.finfo('d').eps
 LARGE = np.finfo('d').max
-LOG_0 = -LARGE #log(EPS) #np.finfo('d').min
+LOG_0 = -LARGE #np.log(EPS) #np.finfo('d').min
 MISS = None
 
 def _normalize_log_sum(items):
@@ -20,7 +18,7 @@ def _normalize_log_sum(items):
     else:
         i = sorted(range(len(items)), key=lambda k: items[k], reverse=True)
         max_log_w = items[i[0]]
-        log_sum = max_log_w + log(1.0+sum(exp(items[i[1:]]-max_log_w)))
+        log_sum = max_log_w + np.log(1.0+sum(np.exp(items[i[1:]]-max_log_w)))
 
     return (items-log_sum, log_sum)
 
@@ -117,7 +115,7 @@ class Track(object):
 
     def is_within(self, volume):
         # Margin using covariance?
-        return array([lhyp.target().is_within(volume) for lhyp in self._lhyps.values()]).any()
+        return np.array([lhyp.target().is_within(volume) for lhyp in self._lhyps.values()]).any()
 
     def log_likelihood_ratio(self, lhyp_id=None):
         if lhyp_id is None:
@@ -162,9 +160,9 @@ class Track(object):
         for lid, lhyp in self._lhyps.items():
             target = lhyp.target()
             (z_in_gate, in_gate_indices) = target.gating(Z)
-            lh = array([target.predicted_likelihood(z) for z in z_in_gate])
+            lh = np.array([target.predicted_likelihood(z) for z in z_in_gate])
             lhood = np.full(len(Z), LOG_0)
-            lhood[in_gate_indices] = lh + log(volume.P_D()+EPS) - log(volume.clutter_intensity()+EPS)
+            lhood[in_gate_indices] = lh + np.log(volume.P_D()+EPS) - np.log(volume.clutter_intensity()+EPS)
             new_lhyps[lid] = OrderedDict([
                 (j, LocalHypothesis.new_from_hit(lhyp, Z[j], lhood[j], t_now)
                     if j in in_gate_indices else
@@ -172,7 +170,7 @@ class Track(object):
                 for j in range(len(Z))
             ])
             P_G = 1.0
-            new_lhyps[lid][MISS] = LocalHypothesis.new_from_miss(lhyp, log(1.0 - volume.P_D()*P_G + EPS), t_now)
+            new_lhyps[lid][MISS] = LocalHypothesis.new_from_miss(lhyp, np.log(1.0 - volume.P_D()*P_G + EPS), t_now)
 
         return new_lhyps
 
@@ -189,23 +187,23 @@ class CostMatrix(object):
 
         new_lhyps = lambda trid: track_updates[trid][global_hypothesis[trid]]
 
-        hit_likelihoods = lambda trid: array([
+        hit_likelihoods = lambda trid: np.array([
             LOG_0 if lhyp is None else lhyp.log_likelihood()
             for detection, lhyp in new_lhyps(trid).items() if detection is not MISS
         ])
 
-        c_track_detection = vstack(tuple(
+        c_track_detection = np.vstack(tuple(
             (hit_likelihoods(trid) for trid in self._included_trids)
         ))
 
-        miss_likelihood = array([
+        miss_likelihood = np.array([
             new_lhyps(trid)[MISS].log_likelihood() for trid in self._included_trids
         ])
 
         c_miss = np.full(2*(len(miss_likelihood),), LOG_0)
         np.fill_diagonal(c_miss, miss_likelihood)
 
-        self._matrix = -1.0 * hstack((c_track_detection, c_miss))
+        self._matrix = -1.0 * np.hstack((c_track_detection, c_miss))
 
     def tracks(self):
         return self._included_trids[:]
@@ -237,7 +235,7 @@ class CostMatrix(object):
                 if det_index not in track_to_det
             ]
 
-            yield sum_cost, assignments, array(unassigned_detections, dtype=int)
+            yield sum_cost, assignments, np.array(unassigned_detections, dtype=int)
 
     def __repr__(self):
         return str(self._matrix)
@@ -249,16 +247,16 @@ class Tracker(object):
         self._weight_threshold = hyp_weight_threshold
         self.tracks = dict()
         self.ghyps = [dict()]
-        self.gweights = array([log(1.0)])
+        self.gweights = np.array([np.log(1.0)])
 
     def create_track_trees(self, detections, volume, targetmodel, t_now):
         intensity_c = volume.clutter_intensity()
         intensity_new = volume.initiation_intensity()
-        llr0 = log(intensity_new+EPS) - log(intensity_c+EPS)
+        llr0 = np.log(intensity_new+EPS) - np.log(intensity_c+EPS)
 
         new_ghyp = dict()
         for z in detections:
-            llhood = log(volume.P_D()+EPS) - log(intensity_c+EPS)
+            llhood = np.log(volume.P_D()+EPS) - np.log(intensity_c+EPS)
             target = targetmodel.from_one_detection(z, t_now)
             new_lhyp = LocalHypothesis(target, llr0, llhood, t_now)
             new_track = Track(new_lhyp)
@@ -286,7 +284,7 @@ class Tracker(object):
                 cost_matrix = CostMatrix(ghyp, track_updates)
 
                 if cost_matrix.tracks():
-                    nof_best = ceil(exp(weight) * M)
+                    nof_best = np.ceil(np.exp(weight) * M)
 
                     for _, assignment, unassigned_detections in cost_matrix.solutions(nof_best):
                         new_ghyp = dict()
@@ -323,7 +321,7 @@ class Tracker(object):
 
         assert(len(new_ghyps)==len(new_weights))
 
-        new_weights, new_ghyps = self.prune_dead(array(new_weights), array(new_ghyps))
+        new_weights, new_ghyps = self.prune_dead(np.array(new_weights), np.array(new_ghyps))
         new_weights, _ = _normalize_log_sum(new_weights)
 
         assert(len(new_ghyps)==len(new_weights))
@@ -365,7 +363,7 @@ class Tracker(object):
 
         assert(len(pruned_weights)==len(pruned_ghyps))
 
-        return array(pruned_weights), array(pruned_ghyps)
+        return np.array(pruned_weights), np.array(pruned_ghyps)
 
     @staticmethod
     def hypothesis_prune(weights, hypotheses, threshold):
@@ -375,7 +373,7 @@ class Tracker(object):
     @staticmethod
     def hypothesis_cap(weights, hypotheses, M):
         if len(weights) > M:
-            i = argsort(weights)
+            i = np.argsort(weights)
             m_largest = i[::-1][:M]
             return (weights[m_largest], hypotheses[m_largest])
         else:
@@ -401,7 +399,7 @@ class Tracker(object):
             sum([self.tracks[trid].log_likelihood(lid) for trid, lid in ghyp.items()])
             for ghyp in global_hypotheses
         ]
-        gweights, _ = _normalize_log_sum(array(weights_updated))
+        gweights, _ = _normalize_log_sum(np.array(weights_updated))
         return gweights
 
     def terminate_tracks(self):
@@ -411,7 +409,7 @@ class Tracker(object):
             del self.tracks[trid]
 
     def update(self, detections, volume, targetmodel, t_now):
-        Z = array(detections)
+        Z = np.array(detections)
 
         track_updates = OrderedDict([
             (trid, track.update(Z, volume, t_now))
