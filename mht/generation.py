@@ -1,5 +1,4 @@
 import numpy as np
-from numpy.random import (multivariate_normal, uniform, poisson)
 
 def ground_truth(t_length, x_birth, t_birth, t_death, motionmodel, dt=1.0):
     """
@@ -14,7 +13,7 @@ def ground_truth(t_length, x_birth, t_birth, t_death, motionmodel, dt=1.0):
     for i, state in enumerate(x_birth):
         trajs[t_births[i]][i] = state
         for t in range(t_births[i] + 1, t_deaths[i] + 1):
-            trajs[t][i] = multivariate_normal(motionmodel.f(trajs[t-1][i], dt), motionmodel.Q(dt))
+            trajs[t][i] = np.random.multivariate_normal(motionmodel.f(trajs[t-1][i], dt), motionmodel.Q(dt))
 
     return trajs
 
@@ -27,13 +26,13 @@ def measurements(ground_truth, measmodel, P_D, lambda_c, range_c):
 
     for t, objects in enumerate(ground_truth):
         meas[t] = [
-            multivariate_normal(measmodel.h(state), measmodel.R()) 
-            for state in objects.values() if uniform() <= P_D
+            np.random.multivariate_normal(measmodel.h(state), measmodel.R()) 
+            for state in objects.values() if np.random.uniform() <= P_D
         ]
 
         delta_c = range_c[:,1] - range_c[:,0]
-        for _ in range(poisson(lambda_c)):
-            meas[t].append(range_c[:,0] + delta_c * uniform(size=measmodel.dimension()))
+        for _ in range(np.random.poisson(lambda_c)):
+            meas[t].append(range_c[:,0] + delta_c * np.random.uniform(size=measmodel.dimension()))
 
     return meas
 
@@ -53,12 +52,12 @@ def random_ground_truth(t_length, init_state_density, init_lambda, P_survival, m
     t_death = list()
 
     for t in range(t_length):
-        for _ in range(poisson(init_lambda)):
+        for _ in range(np.random.poisson(init_lambda)):
             x_birth.append(init_state_density.sample())
             t_birth.append(t)
 
             t_d = t + 1
-            while (uniform() <= P_survival) and (t_d < t_length):
+            while (np.random.uniform() <= P_survival) and (t_d < t_length):
                 t_d += 1
 
             t_death.append(t_d)
