@@ -1,6 +1,6 @@
 import numpy as np
 
-from .constants import (LOG_0, MISS)
+from mht.constants import (LOG_0, MISS)
 
 from murty import Murty
 

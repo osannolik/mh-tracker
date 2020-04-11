@@ -1,6 +1,6 @@
 import numpy as np
 
-from .constants import (EPS, LARGE, LOG_0, MISS)
+from mht.constants import (EPS, LARGE, LOG_0, MISS)
 from . import assignment_solver
 
 from collections import (OrderedDict)

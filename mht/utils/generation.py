@@ -1,6 +1,6 @@
 import numpy as np
 
-def ground_truth(t_length, x_birth, t_birth, t_death, motionmodel, dt=1.0):
+def _ground_truth_fixed_step(t_length, x_birth, t_birth, t_death, motionmodel, dt):
     """
     returns a list of length t_length with dictionaries containing object states. 
     """
@@ -16,6 +16,16 @@ def ground_truth(t_length, x_birth, t_birth, t_death, motionmodel, dt=1.0):
             trajs[t][i] = np.random.multivariate_normal(motionmodel.f(trajs[t-1][i], dt), motionmodel.Q(dt))
 
     return trajs
+
+
+def ground_truth(t_end, x_birth, t_birth, t_death, motionmodel, dt=1.0):
+    """
+    returns a list of length floor(t_end/dt) with dictionaries containing object states. 
+    """
+    t_length = int(t_end/dt)
+    t_births = [int(t/dt) for t in t_birth]
+    t_deaths = [int(t/dt) for t in t_death]
+    return _ground_truth_fixed_step(t_length, x_birth, t_births, t_deaths, motionmodel, dt)
 
 def measurements(ground_truth, measmodel, P_D, lambda_c, range_c):
     """
@@ -36,7 +46,7 @@ def measurements(ground_truth, measmodel, P_D, lambda_c, range_c):
 
     return meas
 
-def random_ground_truth(t_length, init_state_density, init_lambda, P_survival, motionmodel, dt):
+def random_ground_truth(t_end, init_state_density, init_lambda, P_survival, motionmodel, dt):
     """
     Generate a set of ground truth objects. 
     Object birth is modelled as a Poisson process with init_lambda as the expected number of
@@ -45,8 +55,10 @@ def random_ground_truth(t_length, init_state_density, init_lambda, P_survival, m
     motionmodel as long as it is still alive.
     Object death is modelled using a constant probability of survival P_survival.
 
-    returns a list of length t_length with dictionaries containing object states. 
+    returns a list of length floor(t_end/dt) with dictionaries containing object states. 
     """
+    t_length = int(t_end/dt)
+
     x_birth = list()
     t_birth = list()
     t_death = list()
@@ -65,4 +77,4 @@ def random_ground_truth(t_length, init_state_density, init_lambda, P_survival, m
     assert(len(x_birth)==len(t_birth)==len(t_death))
     assert((np.array(t_birth) < np.array(t_death)).all())
 
-    return ground_truth(t_length, x_birth, t_birth, t_death, motionmodel, dt)
+    return _ground_truth_fixed_step(t_length, x_birth, t_birth, t_death, motionmodel, dt)

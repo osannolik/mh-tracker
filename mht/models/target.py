@@ -3,7 +3,7 @@ from collections import (deque)
 from .motionmodel import (ConstantVelocity2D)
 from .measmodel import (ConstantVelocity)
 
-from .gaussian import (Density)
+from mht.utils.gaussian import (Density)
 from scipy.stats.distributions import (chi2)
 
 class Target(object):

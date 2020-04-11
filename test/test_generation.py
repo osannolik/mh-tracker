@@ -2,11 +2,11 @@ import unittest
 
 import numpy as np
 
-import mht.generation as gen
+import mht.utils.generation as gen
 
 from numpy import (array, zeros)
-from mht.motionmodel import (ConstantVelocity2D)
-from mht.measmodel import (ConstantVelocity)
+from mht.models.motionmodel import (ConstantVelocity2D)
+from mht.models.measmodel import (ConstantVelocity)
 
 class GenerationTest(unittest.TestCase):
 
@@ -14,9 +14,9 @@ class GenerationTest(unittest.TestCase):
         pass
 
     def test_ground_truth(self):
-        motionmodel = ConstantVelocity2D(T=1.0, sigma=1.0)
+        motionmodel = ConstantVelocity2D(sigma=1.0)
         truth = gen.ground_truth(
-            t_length = 10,
+            t_end = 10,
             x_birth = [zeros(motionmodel.dimension()), array([0.0, 0.0, 1.0, 0.0])],
             t_birth = [2, 3],
             t_death = [8, 10 + 1],
@@ -26,9 +26,9 @@ class GenerationTest(unittest.TestCase):
         self.assertTrue(True) # TODO
 
     def test_measurements(self):
-        motionmodel = ConstantVelocity2D(T=1.0, sigma=1.0)
+        motionmodel = ConstantVelocity2D(sigma=1.0)
         truth = gen.ground_truth(
-            t_length = 5,
+            t_end = 5,
             x_birth = [zeros(motionmodel.dimension())],
             t_birth = [0],
             t_death = [4],
