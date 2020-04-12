@@ -1,7 +1,7 @@
 import numpy as np
 
 from mht.constants import (EPS, LARGE, LOG_0, MISS)
-from . import assignment_solver
+from . import data_association
 
 from collections import (OrderedDict)
 from copy import (deepcopy)
@@ -211,7 +211,7 @@ class Tracker(object):
         if self.tracks:
 
             for ghyp, weight in zip(self.ghyps, self.gweights):
-                cost_matrix = assignment_solver.CostMatrix(ghyp, track_updates)
+                cost_matrix = data_association.CostMatrix(ghyp, track_updates)
 
                 if cost_matrix.tracks():
                     nof_best = np.ceil(np.exp(weight) * M)
