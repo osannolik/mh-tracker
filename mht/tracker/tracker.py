@@ -209,8 +209,6 @@ class Tracker(object):
         new_ghyps = list()
 
         if self.tracks:
-            if not track_updates:
-                return
 
             for ghyp, weight in zip(self.ghyps, self.gweights):
                 cost_matrix = assignment_solver.CostMatrix(ghyp, track_updates)
