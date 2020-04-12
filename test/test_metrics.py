@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from mht.metrics import (MOTMetric)
+from mht.utils.metrics import (MOTMetric)
 
 class MOTMetricsTest(unittest.TestCase):
 
@@ -25,7 +25,7 @@ class MOTMetricsTest(unittest.TestCase):
 
     def test_motp(self):
         motp = self.metric.MOTP()
-        self.assertEqual(motp, 1.25)
+        self.assertEqual(motp, 1.0-1.25)
 
 if __name__ == '__main__':
     unittest.main()
