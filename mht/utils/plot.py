@@ -11,57 +11,65 @@ def to_state(obj):
     else:
         return obj
 
-def to_2d(objects, measmodel=None):
-    """
-    if measmodel is None the objects are assumed to already be measurements
-    """
-    h = lambda x: x if measmodel is None else measmodel.h(x)
-
-    return [
-        {i: h(to_state(x)) for i, x in objs.items()}
-        if isinstance(objs, dict) else
-        {i: h(to_state(x)) for i, x in enumerate(objs)}
-        for objs in objects
-    ]
-
-def covariance_ellipse_2d(density, measmodel, nstd=2, **kwargs):
-    z, r1, r2, theta = density.cov_ellipse(measmodel, nstd)
-    ellip = Ellipse(xy=z, width=2*r1, height=2*r2, angle=theta, **kwargs)
-    ellip.set_alpha(0.3)
-    plt.gca().add_artist(ellip)
-
-    return ellip
-
-def covariances_2d(objects, measmodel, nstd=2, **kwargs):
-    for objs in objects:
-        for obj in objs.values():
-            covariance_ellipse_2d(obj, measmodel, nstd, **kwargs)
-
-def measurements_2d(detections, **kwargs):
-    meas = to_2d(detections)
-    trajectory_2d(meas, measmodel=None, linestyle='', **kwargs)
-
-def trajectory_2d(objects, measmodel=None, **kwargs):
-    if measmodel is not None:
-        assert measmodel.dimension() == 2
-
-    objects_meas = to_2d(objects, measmodel)
-
-    obj_index_to_id = list(set([ids for objs in objects_meas for ids in objs.keys()]))
-    id_to_obj_index = {id: i for i, id in enumerate(obj_index_to_id)}
-
-    n_objs = len(obj_index_to_id)
-    t_length = len(objects_meas)
-
-    zx = np.full((t_length, n_objs), np.nan)
-    zy = np.full(zx.shape, np.nan)
-
-    for t, objs in enumerate(objects_meas):
-        for id, z in objs.items():
-            i = id_to_obj_index[id]
-            [zx[t,i], zy[t,i]] = z
-
-    plt.plot(zx, zy, **kwargs)
-
 def show():
     plt.show()
+
+class Plotter(object):
+
+    def __init__(self, to_plot_coordinates, **kwargs):
+        self._to_z = to_plot_coordinates
+        self._fig = plt.figure(**kwargs)
+
+    def show(self):
+        show()
+
+    def _project(self, objects, h):
+        return [
+            {i: h(to_state(x)) for i, x in objs.items()}
+            if isinstance(objs, dict) else
+            {i: h(to_state(x)) for i, x in enumerate(objs)}
+            for objs in objects
+        ]
+
+    def _trajectory(self, objects_meas, **kwargs):
+        obj_index_to_id = list(set([ids for objs in objects_meas for ids in objs.keys()]))
+        id_to_obj_index = {id: i for i, id in enumerate(obj_index_to_id)}
+
+        n_objs = len(obj_index_to_id)
+        t_length = len(objects_meas)
+
+        zx = np.full((t_length, n_objs), np.nan)
+        zy = np.full(zx.shape, np.nan)
+
+        for t, objs in enumerate(objects_meas):
+            for id, z in objs.items():
+                i = id_to_obj_index[id]
+                [zx[t,i], zy[t,i]] = z
+
+        self._fig.gca().plot(zx, zy, **kwargs)
+
+    def trajectory_2d(self, objects, measmodel=None, **kwargs):
+        h = self._to_z if measmodel is None else measmodel.h
+        objects_meas = self._project(objects, h)
+        self._trajectory(objects_meas, **kwargs)
+
+    def measurements_2d(self, detections, inv_h=None, **kwargs):
+        if inv_h is None:
+            objects = self._project(detections, lambda z: z[:2])
+        else:
+            objects = self._project(self._project(detections, inv_h), self._to_z)
+
+        self._trajectory(objects, linestyle='', **kwargs)
+
+    def covariance_ellipse_2d(self, density, measmodel, nstd=2, **kwargs):
+        z, r1, r2, theta = density.cov_ellipse(measmodel, nstd)
+        ellip = Ellipse(xy=z, width=2*r1, height=2*r2, angle=theta, **kwargs)
+        ellip.set_alpha(0.3)
+        self._fig.gca().add_artist(ellip)
+
+        return ellip
+
+    def covariances_2d(self, objects, measmodel=None, nstd=2, **kwargs):
+        for objs in objects:
+            for obj in objs.values():
+                self.covariance_ellipse_2d(obj, measmodel, nstd, **kwargs)

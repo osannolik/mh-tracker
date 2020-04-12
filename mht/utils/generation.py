@@ -29,20 +29,18 @@ def ground_truth(t_end, x_birth, t_birth, t_death, motionmodel, dt=1.0):
 
 def measurements(ground_truth, measmodel, P_D, lambda_c, range_c):
     """
-    range_c is [[x0_min, x0_max], [x1_min, x1_max], ...]
+    range_c is [[z0_min, z0_maz], [z1_min, z1_max], ...]
     """
-    assert(len(range_c)==measmodel.dimension())
     meas = list(list() for _ in range(len(ground_truth)))
 
     for t, objects in enumerate(ground_truth):
         meas[t] = [
-            np.random.multivariate_normal(measmodel.h(state), measmodel.R()) 
+            measmodel.measure(state)
             for state in objects.values() if np.random.uniform() <= P_D
         ]
 
-        delta_c = range_c[:,1] - range_c[:,0]
         for _ in range(np.random.poisson(lambda_c)):
-            meas[t].append(range_c[:,0] + delta_c * np.random.uniform(size=measmodel.dimension()))
+            meas[t].append(measmodel.sample(range_c))
 
     return meas
 

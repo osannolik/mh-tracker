@@ -61,8 +61,8 @@ class Density(object):
             Pz = H @ self.P @ H.T
             z = measure.h(self.x)
         else:
-            Pz = self.P[:]
-            z = self.x[:]
+            Pz = self.P[0:2,0:2]
+            z = self.x[0:2]
         
         eigvals, vecs = np.linalg.eigh(Pz)
         order = eigvals.argsort()[::-1]
