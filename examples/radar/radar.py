@@ -56,8 +56,6 @@ for t, detections in enumerate(measurements):
     estimations.append(tracker.process(detections, volume, targetmodel, t_now))
 
 # Plot results
-measmodel = targetmodel.measure()
-
 projection = lambda x: x[0:2]
 
 p = plot.Plotter(to_plot_coordinates=projection)
