@@ -18,6 +18,7 @@ from mht.utils import generation
 from mht.utils import gaussian
 from mht.utils import plot
 from mht.utils import metrics
+import time
 
 targetmodel = TargetPosition_CV2D
 measmodel = targetmodel.measure()
@@ -36,14 +37,16 @@ volume = CartesianVolume(
 
 mota = list()
 motp = list()
+calc_time = list()
 
 show_plots = False
 
 dt = 1.0
+nof_rounds = 200
 
-for i in range(500):
+for i in range(nof_rounds):
     tracker = Tracker(
-        max_nof_hyps = 40,
+        max_nof_hyps = 10,
         hyp_weight_threshold = np.log(0.05),
     )
 
@@ -59,10 +62,13 @@ for i in range(500):
     measurements = [volume.scan(objs, measmodel) for objs in ground_truth]
 
     estimations = list()
+    tic = time.time()
     for t, detections in enumerate(measurements):
         t_now = dt * t
         estimations.append(tracker.process(detections, volume, targetmodel, t_now))
         #tracker.debug_print(t)
+
+    calc_time.append(time.time()-tic)
 
     track_states = [
         {trid: density.x for trid, density in est.items()}
@@ -73,7 +79,7 @@ for i in range(500):
     mota.append(metric.MOTA())
     motp.append(metric.MOTP())
 
-    print("t{} MOTA = {}, MOTP = {}".format(i, mota[-1], motp[-1]))
+    print("t{} MOTA = {}, MOTP = {}, t_calc = {}".format(i, mota[-1], motp[-1], calc_time[-1]))
 
     if show_plots:
         #show_plot = False
@@ -86,7 +92,9 @@ for i in range(500):
 
         p.show()
 
-print(">>> Mean metrics: MOTA = {}, MOTP = {}".format(np.array(mota).mean(), np.array(motp).mean()))
+print(">>> Mean metrics: MOTA = {}, MOTP = {} after {} rounds of avg {} s".format(
+    np.array(mota).mean(), np.array(motp).mean(), nof_rounds, np.array(calc_time).mean()
+))
 
 import matplotlib.pyplot as plt
 plt.plot(mota)
