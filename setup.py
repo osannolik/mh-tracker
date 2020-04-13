@@ -15,7 +15,7 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/osannolik/mh-tracker",
     author="osannolik",
-    author_email="osannolik@godtycklig.se",
+    author_email="osannolik.pypi@godtycklig.se",
     license="MIT",
     classifiers=[
         "License :: OSI Approved :: MIT License",
